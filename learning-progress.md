@@ -3,7 +3,7 @@
 ## 基本信息
 - **开始日期**：2026-07-13
 - **背景**：Xsolla 培训，方向游戏+AI工程（AIGC管线、NPC、反欺诈）
-- **编程基础**：Python 浅尝辄止，C# 零基础，Unity 零基础，AI/ML 零基础
+- **编程基础**：Python 浅尝辄止
 
 ---
 
@@ -11,7 +11,6 @@
 - **已完成**：建立项目仓库 `game-ai-journey`，创建 `learning-progress.md`
 - **知识点**：学习日志机制，用于跨对话无缝续接进度
 - **当前阶段**：第一阶段（搭环境）
-- **下次开始**：在 Unity Hub 中登录账号并安装 Unity 2022.3 LTS
 
 ---
 
@@ -23,7 +22,6 @@
 - [x] 下载 VS Code 编辑器，配置 Terminal / zsh shell
 - [x] 克隆课程仓库 `apis-and-orders`（`school-gitlab.xsolla.dev`）
 - [x] 运行代码，了解项目结构（`orders-api` / `checkout-api` / `slides` / `handouts`）
-- [x] Unity Hub 3.19.4 安装完成
 - [x] Miniconda 26.5.3 + conda 虚拟环境 `game-ai-journey`（Python 3.13）
 
 ### 课程内容：APIs & Orders — Journey of a Request
@@ -76,5 +74,3 @@
 - **当前阶段**：Xsolla 课程第一天完成 + 本地开发环境就绪
 - **待办**：
   - [ ] 完成 Xsolla 课后作业（HOMEWORK.md）
-  - [ ] 在 Unity Hub 中安装 Unity 2022.3 LTS（组件：VS Community + Windows Build Support IL2CPP）
-  - [ ] 创建第一个 Unity 场景 + 方块旋转脚本
