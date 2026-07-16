@@ -74,3 +74,66 @@
 - **当前阶段**：Xsolla 课程第一天完成 + 本地开发环境就绪
 - **待办**：
   - [ ] 完成 Xsolla 课后作业（HOMEWORK.md）
+
+---
+
+## Session 3 (2026-07-16) — Xsolla 课后作业完成
+
+### 分支管理
+- [x] 重命名分支：`Homework_余尧` → `Homework_yuyao`（不允许中文名）
+- [x] 推送新分支到 GitLab，删除远程旧分支
+
+### 课后作业（HOMEWORK.md）完成情况
+
+**A0 — 新增校验规则**（`validate.js`）
+- [x] `quantity` ≤ 100 校验
+- [x] `amountUsd` 最多 2 位小数（乘以 100 判断是否为整数）
+- [x] 拒绝未知字段（白名单模式）
+- [x] `validatePatchOrder`：PATCH 部分更新校验（至少提供一个字段、amountUsd 不可编辑、未知字段拦截）
+- [x] `validateListQuery`：查询参数校验（limit 1~100、offset ≥ 0、status 枚举）
+
+**A1 — DELETE /orders/:id**（`server.js`）
+- [x] pending 订单 → 200，状态变为 cancelled（软删除）
+- [x] paid 订单 → 409 `order_not_editable`
+- [x] 不存在 → 404 `not_found`
+
+**A2 — PATCH /orders/:id**
+- [x] pending 订单可修改 item 和/或 quantity → 200
+- [x] 校验不通过 → 400 `invalid_update` + `details[]`
+- [x] paid/cancelled 订单 → 409 `order_not_editable`
+- [x] amountUsd 不可编辑
+
+**A3 — GET /orders 分页+过滤**
+- [x] 替换原有裸数组返回为 `{ data, total, limit, offset }` 结构
+- [x] limit 默认 20，offset 默认 0
+- [x] 支持 `?status=` 过滤（先过滤后分页）
+- [x] 参数非法 → 400 `invalid_query`
+
+**测试**
+- [x] 更新原有 GET /orders 测试以适配新返回格式
+- [x] 全部 17 个测试通过 ✅
+
+### 知识巩固
+- **HTTP 方法详解**：GET（查，幂等）、POST（增，非幂等）、PUT（全量替换）、PATCH（部分更新）、DELETE（删）
+- **RESTful 设计**：资源用名词、动词用 HTTP 方法、URL 参数做过滤/分页
+- **参数错误（400）** 的含义：客户端传参不合法，服务端拒绝处理
+- **JSON 字段含义**：`id` / `item` / `quantity` / `amountUsd` / `status` / `createdAt`
+- **测试文件作用**：`orders.test.js` 含 17 个用例，覆盖数据层、校验、路由、并发防护
+
+### Lecture 2 课前准备（新课：API 设计，Go 语言）
+- [x] Git — ✅ 2.54.0
+- [x] Go 1.22+ — ✅ 已安装 1.26.5（配置 PATH 环境变量）
+- [x] VS Code — ✅ 1.129.0
+- [x] Postman — ✅ 已安装
+- [x] GitLab 连通 — ✅ 可访问
+- [x] 克隆 `api-design` 仓库到 `C:\Users\asus\api-design`
+
+### 知识点
+- 将 Go 安装路径 `C:\Program Files\Go\bin` 添加到用户 PATH 环境变量
+- 400 ≠ 服务器 bug，是客户端参数问题；500 才是服务器故障
+- 测试驱动开发（TDD）流程：RED（写失败测试）→ GREEN（实现通过）→ REFACTOR（重构优化）
+
+- **当前阶段**：Xsolla 课程作业完成，准备进入 API 设计课程（Go 语言）
+- **待办**：
+  - [ ] 学习 Go 语言基础
+  - [ ] 完成 API 设计课程（api-design 仓库）
