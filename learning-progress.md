@@ -224,3 +224,72 @@
 - 运行命令：`go test ./... -v -count=1`
 - 可视化报告：`.\run_tests.ps1`
 - 互动菜单：`.\interactive_test.ps1`
+
+---
+
+## Session 5 (2026-07-23) — Xsolla 第二周：应用安全实验（App Security Basics）
+
+### 项目背景
+- 仓库：`app-security-basics` — 一个故意留有 5 个安全漏洞的 Go 迷你支付服务
+- 任务：修复漏洞，让对应测试全绿，提 MR
+
+### 5 个漏洞修复
+
+**EX01 — JWT 身份认证中间件**（`internal/auth/middleware.go`）
+- 问题：starter 不校验签名、不检查算法、不验证过期时间
+- 修复：keyFunc 里强制要求 HMAC 算法（防 `alg: none` 和算法混淆攻击），手动检查 `iss == "xsolla"` 和 `exp` 未过期
+- 通过 8 个测试
+
+**EX02 — CORS 中间件**（`internal/cors/cors.go`）
+- 问题：无脑回 `Access-Control-Allow-Origin: *` + `credentials: true`（浏览器拒绝此组合）
+- 修复：Origin 白名单精确匹配，回声请求 origin（不用 `*`），加 `Vary: Origin` 头，处理 OPTIONS 预检请求（204 + Allow-Methods/Headers/Max-Age）
+- 通过 6 个测试
+
+**EX03 — XSS 输出编码**（`internal/comments/render.go`）
+- 问题：用 `template.HTML(c.Body)` 把用户输入标记为"可信 HTML"，`<script>` 直接执行
+- 修复：三步骤顺序——先正则剥掉 inline event handler（`onclick=`、`onerror=` 等），再用 `html.EscapeString` 转义特殊字符，最后把 `\n` 转 `<br>`
+- 注意：顺序不能反（先换行后转义会把 `<br>` 也转掉）
+- 通过 6 个测试
+
+**EX04 — SQL 注入修复**（`internal/users/repo.go`）
+- 问题：`fmt.Sprintf` 字符串拼接 SQL，`' OR '1'='1` 可绕过
+- 修复：改为参数化查询 `WHERE email = ?`，数据库驱动自动处理转义
+- 通过 5 个测试
+
+**EX05 — HMAC Webhook 签名校验**（`internal/webhook/verify.go`）
+- 问题：starter 完全放行，不校验签名和时间戳
+- 修复：读取 `X-Signature` 和 `X-Timestamp` 头，用 `hmac.Equal` 常数时间比较签名（防时序攻击），校验时间窗口 ±5 分钟（防重放攻击）
+- 通过 9 个测试
+
+### 测试结果
+- 全部 5 个包测试通过 ✅
+- 运行命令：`go test ./internal/...`
+
+### 小问题汇总
+
+**1. JWT keyFunc 的作用？**
+`jwt.Parse` 的第二个参数是一个回调函数。库在解析 token 后会调用它，问"这个 token 说自己用 XX 算法签的，你给不给验签密钥？"。在 keyFunc 里先检查算法是不是 HMAC 家族，不是就拒绝——这是防 `alg: none` 和算法混淆攻击的关键。
+
+**2. 为什么 context 要存用户 ID？**
+中间件校验通过后，必须把校验结果（用户是谁）传给下游 handler。Go 里中间件和 handler 之间没有参数传递通道，只能通过 `r.Context()` 传递。每个请求独立携带自己的 context，并发安全。
+
+**3. CORS 预检（OPTIONS）是干什么的？**
+浏览器发复杂请求（带自定义头、`application/json` 等）前，先发一个 OPTIONS 问服务器"你允许这些方法和头吗？"。服务器不回应 `Allow-Methods`/`Allow-Headers`，浏览器就不发真实请求。不是服务器强制要的，是浏览器强制规则。
+
+**4. `*` + `credentials: true` 为什么不行？**
+规范故意让这个组合不合法——需要用 credentials 就必须显式写明 origin，逼开发者认真想清楚哪些域值得信任。
+
+**5. XSS 处理顺序为什么不能反？**
+先转义后换行 → 我们插入的 `<br>` 不被转义（正确）。先换行后转义 → `<br>` 也被转成 `&lt;br&gt;`，换行效果消失。
+
+**6. 为什么用 `hmac.Equal` 而不是 `==`？**
+`==` 逐字节比较，第一个字节不匹配就立刻返回 false，攻击者可以通过响应时间猜"我第一个字节猜对了没"，逐字节爆破签名。`hmac.Equal` 不管匹配还是差一个字节，耗时都一样。
+
+### 提交记录
+- [x] 创建分支 `homework/yuyao`
+- [x] 5 个作业分别 commit
+- [x] 推送至 GitLab
+- [ ] 在 GitLab 创建 Merge Request
+
+### 待办
+- [ ] 在 GitLab 上创建 MR，粘贴 MR 描述
