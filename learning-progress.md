@@ -293,3 +293,105 @@
 
 ### 待办
 - [ ] 在 GitLab 上创建 MR，粘贴 MR 描述
+
+---
+
+## Session 6 (2026-07-28) — Xsolla 第三周：数据持久化（Data Persistence & Code Organization）
+
+### 项目背景
+- 仓库：`data-persistence` — 课件 8 章覆盖 Transaction / Index / Table design / Schema / Query in codes / Join / Other databases
+- 三个作业全部用 **Go 语言** 完成（删掉了初始的 Python 版本），对应课件 slide 8 / 14 / homework.md
+- 环境：MySQL 9.7（REPEATABLE-READ 默认隔离级别），Go 1.26.5
+
+### 三个作业完成情况
+
+**作业一 — MySQL 事务隔离级别对照实验**（`schema.sql` + `isolation/`）
+- [x] 用 Go goroutine + 同步通道（barrier）模拟两个并发 Session，精确控制 T1→T8 时序
+- [x] 场景 A：`START TRANSACTION WITH CONSISTENT SNAPSHOT` → 三次查询都是 k=1 ✅
+- [x] 场景 B：普通 `START TRANSACTION` → 第一次查询就是 k=2 ✅
+- [x] 实测验证两个场景，输出完全符合预期
+
+**作业二 — 电商系统表设计**（`goods_orders.sql`）
+- [x] 设计 users / goods / orders 三表，InnoDB + utf8mb4
+- [x] goods 1:N orders（外键关联，对应 "goods belonging to it"）
+- [x] 字段类型：金额 DECIMAL(10,2)、状态 ENUM、时间 DATETIME
+- [x] 测试数据 3 用户 + 4 商品 + 5 订单 + 3 条 JOIN 查询示例
+
+**作业三 — database/sql 实现 CRUD**（`crud/`，6 个 Go 文件）
+- [x] Goods / Orders 完整 CRUD，分层组织（models / db / repo / main）
+- [x] 事务性下单 `CreateOrder`：`FOR UPDATE` 行锁 + 扣库存 + 写订单原子提交
+- [x] 实测：下单 5 个库存 200→195；下单 999999 个库存不足，事务回滚库存不变
+
+### 提交记录
+- [x] 创建分支 `yuyao-homework`，提交 16 个文件（1890 行）
+- [x] 密码以占位符 `your_password` 提交（不泄露真实密码）
+- [x] 推送至学校 GitLab
+- [ ] 在 GitLab 创建 Merge Request
+
+### 个性化知识点回顾（基于学习过程中的疑问）
+
+**1. 隔离级别和"快照时机"是两件事**
+- 困惑："可重复读不是应该读到旧值吗？为什么场景 B 读到了新值 k=2？"
+- 解答：场景 B 依然是完美的可重复读。MySQL 的可重复读靠 **MVCC 快照** 实现，承诺的是"快照建立后别的事务再提交你看不到"，**不承诺**"事务一开始数据是啥样你就只能看到啥样"。
+- 类比：方案 A 像一进电影院就戴上耳机（录音是进场那一刻录的）；方案 B 像进场后发呆，等电影演一半才戴耳机（录的是半场内容），但戴上后内容不再变。
+- **关键区别**：`WITH CONSISTENT SNAPSHOT` 让快照在事务开启瞬间建立；普通 `START TRANSACTION` 让快照延迟到第一条 SELECT。两者都满足可重复读，差别只在"以哪个时间点为准"。
+- **实际用途**：`mysqldump --single-transaction` 用它保证导出整个库时所有表来自同一时间点（一致性备份）。
+
+**2. 金额为什么必须用 DECIMAL，绝不用 FLOAT/DOUBLE？**
+- 困惑："差那么一点点小数有啥关系？"
+- 解答：浮点数是近似存储，`0.1 + 0.2 = 0.30000000000000004` 不是 0.3。电商一天百万订单，每笔差一丢丢，月底财务对账就对不上。`DECIMAL(10,2)` 是定点数，存的就是精确十进制值，零误差。这是数据库设计第一铁律。
+- 替代方案：用 INT 存"分"（299 = 2.99 元）也能规避浮点，但 DECIMAL 更直观。
+
+**3. 状态为什么用 ENUM 而不是 VARCHAR？**
+- 解答：ENUM 只存整数索引（1-2 字节），天然约束取值（填错报错），查询快（整数比较）。代价是新增状态要 `ALTER TABLE`。所以：状态稳定（像订单状态）用 ENUM；状态频繁变动用 VARCHAR + 应用层校验。
+
+**4. 主键为什么用自增 id 而不是业务字段（如商品名）？**
+- 困惑："slide 13 问 Must there be an id column？"
+- 解答：主键要满足①唯一②永不变③短小高效④与业务无关。商品名会重名、会改名，字符串还占空间、索引慢。用"和业务无关的自增整数"（代理键 surrogate key）是业界标准。而且外键要引用主键——如果 goods 用商品名当主键，orders 的 goods_id 就得存一长串名字，改名时所有订单外键都要跟着改，灾难。
+
+**5. 外键到底有什么用？**
+- 困惑："需求只提到 goods 和 order，为什么要加 users 表？"
+- 解答：需求里的 "user" 本质是"订单属于谁"。直接存用户名字符串（方案A）的问题：用户改名要改所有订单、没法保证是真实用户。用外键关联 users 表（方案B）：用户改名只改一处、外键保证每个订单指向真实用户。这就是数据库范式——不要多处重复存同一份数据。
+- **外键的实际价值**：数据库主动拒绝脏数据。比如插一个 `goods_id=999`（不存在的商品）的订单，数据库直接报错 `foreign key constraint fails`，不用靠应用层代码检查。
+
+**6. 一个订单只能买一件商品？这设计够吗？**
+- 解答：我们的简化版是 1:N（一个订单关联一个商品），但真实电商购物车要买多种商品，需要三表结构：orders（订单主表）1:N order_items（订单明细）N:1 goods（商品）。每个订单可含多条明细。
+- **关键细节**：order_items 里要冗余存 `unit_price`（下单时单价快照），因为商品价格会变，但订单金额不能变。这和作业一的"快照"思想异曲同工——关键时刻定格，后续变化不影响已发生的事实。
+
+**7. 为什么扣库存和写订单要在同一个事务？**
+- 困惑：作业三那句 "data inserted should reflect the relationship" 怎么体现？
+- 解答：下单同时改两张表（扣 goods 库存 + 插 orders 订单）。不用事务会出"库存扣了但没订单"的不一致（仓库少货却找不到买家）。用事务保证 ACID 的 A（原子性）——要么都成功要么都回滚。这正是用作业一的事务知识保证作业二的表关系一致性。
+
+**8. `FOR UPDATE` 行锁是怎么防超卖的？**
+- 困惑："SELECT 加个 FOR UPDATE 有啥用？"
+- 解答：并发场景下，两个事务同时读到 stock=1，都以为够，都扣减，结果 stock 变 -1（超卖）。`SELECT ... FOR UPDATE` 给这行加写锁，第二个事务必须等第一个提交后才能读，强制串行执行。这是我们代码里防超卖的核心手段。
+
+**9. Go 代码为什么要分成 6 个文件？**
+- 解答：呼应课程标题 "Code Organization"。按职责分层：
+  - `models.go` 数据结构层 → `db.go` 基础设施层（连接池）→ `*_repo.go` 数据访问层（Repository 模式，每表一个仓库）→ `main.go` 编排层
+  - 每层各司其职：换数据库只改 repo 层、改连接配置只改 db 层、main 只管"做什么"不管"怎么做"。这是 Repository 模式的雏形。
+
+**10. `?` 占位符为什么能防 SQL 注入？**
+- 解答：字符串拼接（`fmt.Sprintf`）会被注入——如果用户名是 `'); DROP TABLE goods;--`，拼接后整条 SQL 变成删除表。`?` 占位符让驱动把参数当**纯数据**处理，特殊字符自动转义，彻底杜绝注入。这和 Session 5 的 EX04（SQL 注入修复）是同一个知识点。
+
+**11. `defer rows.Close()` 为什么必须写？**
+- 解答：`db.Query` 会从连接池**借走一个连接**，直到 `Close` 才归还。忘了关就泄漏连接，池子迟早被掏空程序卡死。`defer` 保证函数退出前一定关闭（即使 panic 也执行）。同理 `tx` 的 `defer Rollback` 兜底也是这个思路。
+
+**12. `sql.Open` 之后为什么一定要 `db.Ping()`？**
+- 解答：`sql.Open` 是惰性的，只验证 DSN 格式对不对，**根本没连数据库**。密码错了或 MySQL 没启动，`Open` 不报错，要等到第一次查询才炸。`Ping()` 强制立即建连接，把问题提前暴露。
+
+### 横向串联：三个作业都在回答"怎么保证数据是对的"
+- 作业一 → **读一致性**（隔离级别 + 快照时机）
+- 作业二 → **结构一致性**（外键约束 + 合理类型）
+- 作业三 → **操作一致性**（事务 + 行锁）
+- 贯穿主题：数据完整性是数据库设计的核心追求，索引/Join/其他数据库（Redis/ES/TiDB）都是在不同维度平衡一致性与性能
+
+### 知识点
+- Xsolla 课程第三周节奏：先讲 ACID/隔离级别理论 → 自己动手建表 → 用 database/sql 写 CRUD
+- 学习日志的"小问题汇总"写法很有用：记录真实疑问 + 自己的语言解答，比抄概念记得牢
+- Go 操作数据库的标准库就是 `database/sql` + 驱动（`go-sql-driver/mysql`），`sql.DB` 是连接池管理者而非单个连接
+
+- **当前阶段**：Xsolla 课程第三周作业完成（全 Go 实现），三个作业已推送 GitLab
+- **待办**：
+  - [ ] 在 GitLab 创建 Merge Request
+  - [ ] 预习课件后半部分：Index / Join 性能 / 其他数据库（Redis、ES、TiDB）
