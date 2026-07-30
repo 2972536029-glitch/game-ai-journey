@@ -491,3 +491,162 @@
   - [ ] 在 GitLab 创建 Merge Request
   - [ ] 预习课件后半部分：Index / Join 性能 / 其他数据库（Redis、ES、TiDB）
 
+---
+
+## Session 7 (2026-07-30) — Xsolla React 前端课程：两讲作业连做（GitHub Profile Finder + React Hooks Playground）
+
+### 课程新主题：前端 React
+Session 2-6 都是后端（APIs / Go / Security / Database），今天正式进入前端 React 主题，一天连做两讲作业，技术栈 React 19 + TypeScript + Vite。
+
+### 第一讲作业：GitHub Profile Finder（React 入门）
+
+**项目背景**
+- 仓库：`checkout-demo` 下建子项目 `homework/github-finder`（独立 package.json 自治运行，和源码区分开）
+- 技术栈：React 19 + TS + Vite + React Compiler + 原生 fetch（沿用 checkout-demo 约定）
+- 数据源：GitHub API `https://api.github.com/users/{username}`
+
+**完成情况**
+- [x] 必做项全做：受控搜索框 + 提交按钮、头像/姓名/简介/粉丝/仓库数、loading 状态、404 友好提示
+- [x] 加分项全做：最近仓库列表（`/users/{username}/repos`）、GitHub 风格卡片、localStorage 最近 5 次搜索、防抖 debounce（500ms）
+- [x] UI 重新设计：渐变光晕风（glassmorphism 玻璃拟态 + 渐变背景 + 浮动光斑动画 + 深浅色自动切换）
+- [x] 写了 CHANGELOG.md 改动总结
+
+**核心技术点**
+- **受控表单**：`<input value={state} onChange={e=>setState(...)}>`，一个输入对应一个 state（React 单向数据流的核心写法）
+- **三态模式**：loading / error / success，每个异步请求都要管这三态
+- **竞态处理**：useEffect 里用 `cancelled` 标志，连续搜索时丢弃过期响应（旧请求回来时 cancelled 已为 true，直接 return）
+- **localStorage 惰性初始化**：`useState(() => JSON.parse(localStorage...))`，只在首次渲染读一次，不每次渲染都解析
+- **debounce**：useEffect + useRef 存 timer id + cleanup clearTimeout，输入停顿 500ms 才触发搜索
+
+**提交记录**
+- [x] 分支 `yuyao-homework`（一开始误用 `feat/github-finder`，按名字+homework 惯例改名）
+- [x] GitLab MR !2，Open / Ready to merge（改名时关掉旧 !1，重开 !2）
+
+### 第二讲作业：React Hooks Playground（三 Task + 概念题）
+
+**项目背景**
+- 仓库：`react-hooks` 的 `playground` 文件夹（远程更新 commit 5b87849 新增）
+- 权重：概念题 ~40%、Focus Timer ~25%、Live Search ~35%、Concurrent Filter 加分 +10
+
+**完成情况**
+
+| Task | 文件 | 核心实现 |
+|------|------|---------|
+| **1 · Focus Timer**（必做·热身）| `useCountdown.ts` / `FocusTimer.tsx` | useState(秒数/运行态) + useRef(interval id/最新 onDone) + useEffect(每秒 tick，依赖 `[isRunning]`，cleanup `clearInterval`)；到 0 用独立 effect 触发 onDone；session log 持久化到 localStorage（惰性初始化） |
+| **2 · Live Search**（必做·主计分）| `useDebouncedValue.ts` / `LiveSearch.tsx` | 泛型 `<T>` debounce（cleanup `clearTimeout`）；每次 effect 新建 `AbortController`、signal 传给 `searchProducts`、cleanup 里 `abort()`；`AbortError` 吞掉；四态齐全（idle/loading/error/空查询） |
+| **3 · Concurrent Filter**（加分·难）| `ConcurrentFilter.tsx` | `useDeferredValue(query)` 只在 concurrent 模式驱动列表；`ResultRow` 包 `React.memo`；`isStale` 控制 dim + "updating…"；naive 模式保持卡顿作对比 |
+| 概念题 | `CONCEPT-CHECK.md` | A1-A3 / B1-B3 / C1-C2 全部作答，每题写"为什么" |
+
+**浏览器验证**
+- [x] Task 2：搜 `shoe` → 40 条全是 Shoes 分类；搜 `fail` → 报错状态；清空 → 回到提示
+- [x] Task 3：concurrent 模式输入 `crimson` → 列表正确过滤、输入框保持最新值
+
+**构建与提交**
+- [x] `npm run build` + `npm run typecheck` 通过（playground 没配 ESLint）
+- [x] commit `c95c71f`，推送 `yuyao-homework` 分支
+- [x] GitLab MR !1，Open / Ready to merge
+
+### 代码深度讲解（2026-07-31 晚）
+
+白天实现了全部作业，晚上从第一讲到第二讲逐个深入过代码。记录真实疑问 + 自己语言的解答。
+
+#### 第一讲 GitHub Profile Finder —— 建立地基
+
+**1. DOM 是什么？为什么要 React？**
+- 困惑："你说的 DOM 是什么？"
+- 解答：DOM = 浏览器眼里的网页，一棵由 `<html>/<body>/<div>` 组成的树。传统写法要亲自操作 DOM（翻树、找节点、改文字）；**React 接管了这件事**——你只管数据（state），React 帮你算出 DOM 该怎么变。手动挡 vs 自动挡：你只管目的地，换挡 React 来。
+
+**2. 页面是 state 的「照片」**
+- 核心认知：state（状态）= 决定页面长什么样的那份数据。数据变 → React 自动重新拍一张照片 → DOM 跟着变。你永远不用操心"去哪个 DOM 改文字"。
+
+**3. 受控组件：输入框是 state 的傀儡**
+- 困惑："onchange 不是负责改变用户数据的吗？怎么到你这儿变成监听了？"
+- 解答（我纠正后）：`onChange` 和 `useEffect` **都是监听**，只是监听对象不同：
+  - `onChange` 监听**用户动作**（贴在输入框上，用户打字才触发）
+  - `useEffect([username])` 监听**数据变化**（贴在 state 上，username 变了就触发，不管怎么变的）
+- 关键追问："必须用 onChange 改变 state 吗？" → 不必。点历史标签的 `onClick`、代码直接调 `setUsername` 都能改。**改变 state 的真正动作是 `setUsername`，onChange 只是"谁来按开关"的一种手指。**
+- 受控的真正含义：输入框被 state 死死锁住，没有自由意志。**删掉 onChange → state 改不了 → React 每次重渲染都把输入框强行拉回原值 → 打不了字。**（实测验证）
+
+#### 第二讲 Task 1 Focus Timer —— useCountdown 逐段拆解
+
+**4. state vs ref —— 第一性判断准则**
+- 判断："这个值变了，页面要不要跟着变？" 要变 → useState；不变 → useRef
+- 困惑："启动次数"该用哪个？→ useState（因为页面要显示"启动次数：3"，值变了页面要变）
+- useCountdown 里：秒数/运行态是 state（屏幕要更新），interval id 是 ref（只是给 cleanup 用，不影响 UI）
+- 精确化："useRef 不能显示"这个说法因果反了 → 应该是"**因为不需要显示，所以选 useRef**"。ref 改值不触发渲染，硬显示也只能停在初始值不动。
+
+**5. cleanup 清理函数 —— 防定时器堆积（Task 1 的灵魂）**
+- 困惑："删掉 cleanup 会怎样？" → 答对了一半（内存泄漏），漏了更致命的：**定时器堆积导致秒数加速**
+- 具体场景：Start → Pause → Start，每次重跑 effect 都开新定时器但不关旧的 → 1 个、2 个、3 个定时器同时跑 → 每秒减 1、减 2、减 3…功能直接崩
+- StrictMode 在 dev 模式故意把 effect 跑两遍，就是逼你暴露漏写 cleanup 的 bug
+
+**6. ref 中转 onDone —— 闭包陷阱的解法（整个文件最巧妙处）**
+- 困惑："为什么定时器会跟着小明换人而频繁重开？这个中间逻辑在哪？"
+- 解答：逻辑桥梁在**依赖数组**（保安查名单）。如果 `onDone` 在依赖数组里，而 onDone 每次渲染都是新对象（父组件重新造的函数），React 就监测到"名单变了"→ 关开定时器。
+- 套路：`onDoneRef.current = onDone`（悄悄更新 ref，不停定时器）+ effect 依赖只有 `[isRunning]`（onDone 不进名单）+ 定时器触发时读 `onDoneRef.current()`（永远最新）
+- 比喻：**前台通讯录**。小明（onDone）每次被重新招一个新人，去前台更新通讯录；定时器到点不直接找小明，而是翻通讯录拿最新联系方式。
+- 追问："为什么 onDone 每次都要更新？" → 因为父组件每次渲染 `function handleDone(){}` 重新执行，造出**全新的函数对象**（哪怕内容一样）。React 只认"是不是同一个对象"，内容一样但对象不同也算"变了"。不更新 ref → 定时器会调到过期旧版本。
+- 正统解法对比：`useCallback` 让父组件缓存函数（让函数"不变"）；ref 中转让函数"变着也无所谓"。两种都能解，hook 内部用 ref 中转是更通用的套路。
+
+#### 第二讲 Task 1 FocusTimer.tsx —— 惰性初始化 + localStorage
+
+**7. 惰性初始化：少算废活，不是少渲染**
+- `useState(readSessions)`（传函数，无括号）vs `useState(readSessions())`（传值，有括号）
+- 困惑："加括号能跑吗？" → 能跑，但每次渲染都白执行一遍 `读 localStorage + JSON.parse + 校验`
+- 精确化："渲染更麻烦"要改成"每次渲染多干废活"——**渲染次数不变，变的是每次渲染的工作量**。惰性初始化不减少渲染次数，减少每次渲染的工作量。
+
+**8. 读少写多：state 是主，localStorage 是备份**
+- 读：只第一次（惰性初始化，搬进内存后用内存的）
+- 写：每次 sessions 变都写（保证备份永远最新）
+- 困惑："为什么不能反过来读多写少？" → 写只一次 → 后续变化全存不下来 → 刷新就丢数据（用户专注 3 次刷新只剩 1 次）
+- 核心：state 是主，localStorage 是副（备份）。备份必须紧跟主（写多次），主不用反复抄备份（读一次）。
+
+#### 第二讲 Task 2 Live Search —— 防抖 + 竞态
+
+**9. 防抖 = 延迟 + cleanup**
+- cleanup 是灵魂：每次 value 变开新 setTimeout，cleanup 清掉旧的，只有最后一次活下来
+- 删掉 cleanup 退化成单纯延迟：每次输入都延迟 300ms 触发，请求一个没省
+
+**10. 竞态问题：请求发出顺序 ≠ 返回顺序**
+- 困惑："为什么显示 s 的结果而不是 shoe？" → 我说反了，纠正：是 **shoe 先返回（快），s 后返回（慢）**。最慢的 s 最后回来，把正确的 shoe 结果覆盖了。
+- 核心：网络请求不是排队，先发的不一定先到（像寄快递）。最后回来的（最慢的）请求会用过时结果覆盖正确结果。
+- 我自己想到了两种解法：① 版本号机制（递增标识，回来比大小，过期就丢弃）② kill 掉上一个请求（AbortController）。两个全对，是业界两大主流解法。
+- 为什么作业强制 AbortController：版本号只"忽略结果"，请求还在后台跑占资源、还会往已卸载组件塞数据。AbortController **真正掐断请求**，干净利落。
+
+#### 第二讲 Task 3 Concurrent Filter —— 为什么会卡 + 怎么解决
+
+**11. 为什么打字会卡：主线程被渲染霸占**
+- 浏览器只有一个主线程，渲染列表（250ms）和处理键盘输入抢同一个工人
+- 困惑："每个字停顿 2.5 秒？" → 纠正：是每个字卡 **250ms**（四分之一秒），不是 2.5 秒。2.5 秒是 7 个字累积。用户讨厌的是"每一帧都卡"，不是"总共慢"。
+
+**12. useDeferredValue：设优先级，输入急诊、列表门诊**
+- `query`（紧急，输入框用）立刻更新；`deferredQuery`（慢半拍，列表用）等空闲再追
+- 列表显示旧数据不是 bug 是好事：宁可晚一点看到（像直播延迟几秒），也要保证打字流畅
+
+**13. 光 defer 不够，必须配 memo（Task 3 的陷阱题）**
+- 困惑："memo 是什么？" → 是给组件套的壳，props 没变就跳过重新渲染（门卫检查）
+- 为什么光 defer 不够：React 渲染输入框那次，默认会顺带重新渲染所有 250 行（即使内容没变也白渲染）→ defer 白用
+- 精妙连锁：defer 让 deferredQuery 慢半拍 → 列表过滤数据暂时不变 → 传给 250 行的 props 暂时不变 → memo 看到没变全跳过 → 渲染瞬间完成 → 打字不卡。**两个必须一起用，缺一不可。**
+
+#### 概念题 CONCEPT-CHECK 拆解（8 题，但知识点 Task 1/2/3 几乎全覆盖）
+
+**14. B1 push 的 bug —— React 靠「身份/地址」判断变化**
+- 困惑："push 机制不明白" → 解答：JS 里改变量有两种方式
+  - `push`（原地改）：在原本子上加内容，**还是同一个本子、同一地址**
+  - `[...prev, item]`（造新的）：抄一本新本子，**新地址**
+- React 判断"变没变"用 `===` 比地址，不比内容。push 后地址没变 → React 认不出 → 不渲染（你加了苹果屏幕没反应）
+- 追问："state 变化都意味着地址变化吗？" → 不是"意味着"，是"**你必须保证**"。React 契约：改 state 必须给新地址（造新对象），否则 React 探测不到。这就是"不可变(immutable)"原则的根因。
+- 例外：基本类型（数字/字符串）天生不可变，没有地址概念，直接比值，不存在 push 的坑。坑只在对象和数组上。
+- 这跟 Task 3 的 memo 呼应：memo 判断"跳不跳过"也靠 `===` 比地址。原地改会骗过 memo。
+
+**15. 衍生状态直接算（C1）+ key 重置（C2）—— 你可能不需要 effect**
+- C1：总价能从 items 算出来 → 别存 state 也别用 effect 同步，渲染时直接 `items.reduce(...)`。原版会渲染两次（先旧值闪一下，再 effect 更新），叫"闪烁(flicker)"。
+- C2：userId 变化时重置 state → 不用 effect 手动清，用 `key={userId}`。key 变了 React 当成全新组件 → 销毁旧的（连同 state）→ 新组件 `useState('')` 重新初始化。**一锅端，所有 state 干净重置，只渲染一次。**
+- 共同主题（呼应 B3）：**"你真的需要 effect 吗？"** effect 是常被滥用的工具，很多同步逻辑能直接算或用 key 解决。React 官方有篇《You Might Not Need an Effect》专门讲这个。
+
+- **认知里程碑**：从"照着 README 填 TODO"到"能讲清每行代码的 why"——state vs ref 的判断准则、cleanup 的必要性、闭包陷阱的 ref 解法、不可变原则的根因、并发渲染的 defer+memo 配合。这些是 React 的底层心智模型，不是 API 记忆。
+- **当前阶段**：Xsolla React 前端课程两讲作业全部完成并提交，两份 MR 均 Ready to merge；代码已逐个深入过完，概念题全部讲透
+- **待办**：
+  - [x] 晚上逐个深入过代码（从 useCountdown 的 state vs ref、cleanup 开始）
+  - [ ] 等老师批改第一讲（MR !2）和第二讲（MR !1）
+
