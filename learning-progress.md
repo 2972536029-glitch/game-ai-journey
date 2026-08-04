@@ -648,5 +648,120 @@ Session 2-6 都是后端（APIs / Go / Security / Database），今天正式进�
 - **当前阶段**：Xsolla React 前端课程两讲作业全部完成并提交，两份 MR 均 Ready to merge；代码已逐个深入过完，概念题全部讲透
 - **待办**：
   - [x] 晚上逐个深入过代码（从 useCountdown 的 state vs ref、cleanup 开始）
-  - [ ] 等老师批改第一讲（MR !2）和第二讲（MR !1）
+  - [x] 等老师批改第二讲（MR !1）—— 已批改，3 条 review，全部修复 + 回复
+  - [ ] 等老师批改第一讲（MR !2）
+
+---
+
+## Session 7 补充 (2026-08-04) — React Hooks 作业 Review：3 条评审 + 深度原理讨论
+
+### 背景
+第二讲作业（react-hooks playground，MR !1）被老师 Lingfan YANG (@lf.yang，项目 Maintainer) review，挑了 3 条刺。逐条修复 + 回复 + 深度讨论，把每条背后的原理吃透了。
+
+### 老师的 3 条 review + 修复
+
+**① FocusTimer.tsx — `useRef` 初值每次渲染白跑**
+- 原代码：`useRef<number>(sessions.reduce(...)+1)` —— reduce 每次渲染都算，但只有第一次被采用
+- 老师原话：「这里期待的结果是组件初始化设置初始状态，但实际行为是会在视图更新的时候反复跑这个循环。」
+- 修复：lazy ref 惯用法 —— `useRef<number | null>(null)` + `if (nextIdRef.current === null)` 才计算
+- **核心知识点**：`useRef` 不像 `useState` 支持惰性初始化（传函数），括号里的值每次渲染都求值。要惰性必须手写 `if (ref.current === null)` 这个惯用法。
+
+**② useCountdown.ts — ref 中转异步更新有旧值风险**
+- 原代码：`useEffect(() => { onDoneRef.current = onDone }, [onDone])` —— 用 useEffect 同步 ref
+- 老师原话：「这样赋值本质来说是异步的，如果下面在 useLayoutEffect 这种同步 hooks 里面可能用到旧值。」并推荐 `useLayoutEffect` / `useInsertionEffect` / `useEffectEvent`
+- 修复：改用 React 19 的 `useEffectEvent`（`const onDoneEvent = useEffectEvent(onDone)`）
+- **这条最有含金量，展开了整条知识链（见下方深度讨论）**
+
+**③ LiveSearch.tsx — hint 提示区漏了 error 状态**
+- 原代码：底部 hint 三元判断只有 空查询/loading/无结果，error 时误显示「No results」
+- 老师原话：「没有对 error 状态做处理。」
+- 修复：补上 `status === 'error'` 分支，显示「Search failed — please try again.」
+- **教训**：这条性质比前两条重——README 明确要求「handle error」，属于「要求写了却没全覆盖」的验收流程漏洞，不是单纯技术瑕疵。反思后把「交付前逐条对照 README 验收」加进了自审流程。
+
+### 深度讨论的知识点（围绕评审②展开）
+
+这次讨论从「为什么 onDone 会变」一路追到「render 为什么必须纯净」，覆盖了 React 的核心心智模型：
+
+**1. DOM 是什么（纠正认知）**
+- DOM 不是「预制好的界面」，而是浏览器把 HTML 读懂后**在内存里搭出来的一棵树**，每个标签是一个节点
+- 类比：HTML 源码=图纸，DOM=按图纸盖好的房子（可改的真实结构），paint=给房子拍照给用户看
+- **DOM 变了 ≠ 屏幕变了**，中间隔着 paint 这一步
+
+**2. React 一次渲染的时间线（理解 effect 时机的基石）**
+```
+① render(渲染)         → React 算出新虚拟 DOM（只算不写，必须纯净）
+② 更新 DOM             → 真改 DOM
+③ useLayoutEffect 跑   → 同步，绘制前（阻塞绘制！）
+④ 绘制(paint)          → 用户看到画面
+⑤ useEffect 跑         → 异步，绘制后（不阻塞）
+```
+- useEffect 在 ⑤（绘制后），useLayoutEffect 在 ③（绘制前），这个先后是旧值问题的根源
+
+**3. 为什么 onDone 每次渲染都是新函数**
+- 组件就是个函数，渲染=重新调用这个函数 → `function handleDone(){}` 这行被执行一次 → 造出一个新函数对象
+- 哪怕代码内容一模一样，每次都是「新造的杯子」（新内存地址）
+- React 判断依赖变没变用**身份比较**（看地址），不是内容比较 → 每次 onDone 身份都变 → 不能放进依赖数组
+
+**4. 闭包与闭包陷阱**
+- **闭包** = 函数出生时「拍下」了周围的数据（像拍照定格）
+- **闭包陷阱** = 这个函数后来被调用时，看的是旧照片，不是最新数据
+- 在 React 里：effect 里调用的旧函数，看的是它出生时的旧 state → 数据错了
+
+**5. useCountdown 的核心矛盾（为什么需要 ref 中转/useEffectEvent）**
+```
+onDone 写进依赖数组  → 每次渲染都重跑 effect → 定时器被拆掉重建 → 计时器废
+onDone 不写进依赖数组 → 闭包陷阱 → 到 0 时调的是第一次的旧 onDone → 数据错
+```
+两条死路，所以需要第三条：「不进依赖数组，但调用时拿最新值」——这就是 ref 中转 / useEffectEvent
+
+**6. ref 中转的原理（为什么能绕过矛盾）**
+- 思路：把 onDone 存进 ref（盒子），effect 依赖盒子（地址不变）而非 onDone
+- 盒子地址永远不变 → 不触发 effect 重跑 ✅；盒子里内容可随时换 → 读到最新值 ✅
+- 关键：**ref 的全部价值就是「变了但 React 不知道」**——想被监测用 state，不想被监测才用 ref
+
+**7. ref 中转的缺陷 + useEffectEvent 怎么修**
+- ref 中转的更新发生在 useEffect（绘制后），但 useLayoutEffect（绘制前）可能抢先读 → 旧值窗口
+- 这是**顺序问题**（读早于写），不是并发问题 → **用锁解决不了**（单线程没冲突，且锁无法改顺序）
+- useEffectEvent 的解法：把「更新盒子」从绘制后提前到 render 阶段 → 消除旧值窗口
+- **核心：思路一样（用盒子绕过监测），只是更新时机更早、更安全**
+
+**8. 为什么 render 阶段不能直接更新 ref**
+- React 铁律：**render 必须纯净（只算不写）**，因为 render 会被随时重跑（StrictMode 故意跑两遍）
+- 在 render 里干杂活（更新 ref、发请求、写文件）→ 重跑时副作用重复执行 → 灾难
+- useEffectEvent 是 React 官方的「特许通行证」——它内部在 render 阶段碰了 ref，但由 React 兜底保证安全；自己手写就不行
+
+**9. useLayoutEffect 什么时候用**
+- 默认用 useEffect（99% 场景）
+- 只有当「用户能看到错误中间状态（闪烁/跳动）且有害」时才用 useLayoutEffect
+- 典型场景：测量 DOM 位置 + 动态定位（弹窗/tooltip）、滚动同步（聊天列表）、布局防抖（SEO 的 CLS）、防敏感信息闪现（安全）
+- **关键认知**：位置不是内存里存好的数据，是浏览器临时算的（layout 引擎）；React 只管「画什么」，不管「元素落在屏幕哪」——所以需要量位置必须用浏览器 API，而量+改必须在绘制前同步完成
+
+**10. 惰性初始化 vs 位置计算（容易混的两个「只算一次」）**
+| | 惰性初始化 | 位置计算 |
+|---|---|---|
+| 算什么 | 不变的初始数据（读 localStorage） | 随环境变的位置（滚动/缩放都变） |
+| 算几次 | 只算一次（省性能） | 每次需要时重算（保正确） |
+| 用什么 | useState(() => fn) | useLayoutEffect + getBoundingClientRect |
+- **判断准则**：「这数据第一次算完之后还会变吗？」不会→惰性初始化；会→每次实时算
+
+### 工程流程上的两个改进
+
+**1. 自审流程（加进 AGENTS.md，做作业自动触发）**
+- 做完代码后切换到「严格 code reviewer」视角复审，重点查：性能浪费、React 常见坑、状态分支全覆盖、可读性、要求符合度
+- 发现问题先改再交付，不让小问题留到被 review 挑出来
+- 配置在全局 `~/.zcode/AGENTS.md`（所有项目生效）+ 项目级 `C:\react-hooks\AGENTS.md`（历史教训表）
+
+**2. 交付前逐条对照 README 验收**
+- 评审③暴露的漏洞：要求明文写了「handle error」，但只做了主路径（顶部 status bar），漏了次路径（hint 区）
+- 教训固化：交付前逐条对照 README，每个要求在页面上实际验证一遍，不只看主路径
+
+### 涉及的提交和操作
+- [x] 修复 3 处代码（commit `62e373e`，推送 yuyao-homework）
+- [x] 在 GitLab 逐条回复老师（说明每条怎么改的）+ resolve 所有讨论
+- [x] 老师的 review 全部处理完毕，MR !1 等老师二次确认
+
+### 认知里程碑
+- 从「能跑就行」到「理解每行代码的设计权衡」：useEffectEvent 不只是 API 记忆，而是「为什么需要它」的整条因果链（onDone 身份变→不能进依赖→闭包陷阱→ref 中转→异步旧值→useEffectEvent）
+- 跨学科思维迁移：用「锁/死锁」分析 React 时序问题，虽然结论是「单线程不需要锁」，但思考方向是对的——前端问题也能用操作系统思维分析
+- 学会区分两种失误的严重程度：「代码不够优雅」（技术问题，轻）vs「要求写了却没全覆盖」（流程问题，重）
 
