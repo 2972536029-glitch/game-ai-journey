@@ -805,4 +805,119 @@ onDone 不写进依赖数组 → 闭包陷阱 → 到 0 时调的是第一次的
 - 老师补上的是经验，不是知识：见过坑，才会主动防坑
 - 固化：以后写任何异步请求，abort + cancelled 是默认搭配，不再只取一个
 
+---
+
+## Session 8 (2026-08-05 ~ 08-06) — Xsolla 第四周：Connecting APIs & Building Dynamic UI（两份作业连做）
+
+### 项目背景
+仓库 `connecting-apis-and-building-dynamic-ui`（学校 GitLab）。homework 起始项目是个半成品 Vite + React 应用，调 PokeAPI 抓随机宝可梦，用 `useState + useEffect` 三态模板渲染。两份作业都 build on `src/App.jsx`。
+
+### 两份作业完成情况
+- **作业一（宝可梦图鉴）**：完成必做项 + 全部加分项。10 个功能：搜索+自动补全+校验、收藏(localStorage)、上一只/下一只、进化链、主题切换(auto/light/dark)、响应式、搜索框收起、柔和错误气泡。部署到腾讯云 EdgeOne（国内可访问）。
+- **作业二（HTTP 请求分析）**：抓 `api.xsolla.com/.../agreements` 的真实 GET 请求，分析 URL/Method/Status/为何无 Query/Payload，Authorization 打码。
+
+### 核心知识点回顾（基于学习过程中的深度追问）
+
+这次最有价值的是一连串"为什么"——从会用到理解 React 设计哲学。
+
+#### 1. 三态模板的 try/catch/finally 怎么分工
+- `try`：只成功做的事（setPokemon）
+- `catch`：只失败做的事（setError）
+- `finally`：两种都要做的（setLoading(false)）
+- **核心规律**：finally 不是随便分的第三块，是"不管成败都要做"的语义。把 setLoading 放 try 会漏掉失败的情况，放 catch 会漏掉成功。
+
+#### 2. 三态渲染为什么不能只写 `{pokemon && <卡片/>}`
+- 因为 pokemon 是 state，**请求成功后会一直留着旧值**。只判断 pokemon，加载中会显示"上一只的残影"（串台）。
+- 必须 `!loading && !error && pokemon` 三条件互斥，保证任何时刻只有一种状态独占屏幕。
+- 三态本质是**互斥**的，渲染时要显式排除其他态。
+
+#### 3. useEffect 默认只跑一次的根本原因
+- 副作用（fetch/localStorage/addEventListener）需要 DOM 先存在才能安全执行 → 必须在挂载后
+- 副作用重复做会出事（死循环/内存泄漏）→ 默认只一次
+- `[]` = 初始化用；`[dep]` = 初始化 + dep 变了再跑；不写第二个参数 = 每次渲染都跑（危险）
+- 用户的直觉质疑"为什么不能默认不跑、靠依赖触发" → 答案：覆盖不了"一进来就抓数据"的初始化需求
+
+#### 4. fetch 死循环的根因 + useEffect 怎么打破
+- 根因：fetch 写在组件函数体里 → 每次渲染都执行 → fetch → setState → 又渲染 → 又 fetch（首尾相接成环）
+- 解药：放进 useEffect + `[]`，让它只跑一次，打破"每次渲染都重跑"
+- 关键概念纠正："重渲染"≠"effect 重跑"。App 重渲染拿到新 state，但 effect 是否重跑看依赖数组
+
+#### 5. 闭包陷阱（stale closure）
+- onKey 函数在 useEffect 里创建，**冻结了创建时的变量值**
+- 如果依赖数组不包含用到的变量，监听器会用旧值 → 翻错页/加载中拦不住
+- 规则：effect 内部用到的所有外部变量，都要进依赖数组，漏一个就中招
+- 我们的方案：用 ref 镜像最新值（`stateRef.current = { loading, pokemon }`），监听器读 ref，依赖写成 `[]` 只注册一次 → 监听器不频繁重注册，又能拿到最新值
+
+#### 6. localStorage 的两个易混概念
+- **内存 vs 硬盘**：useState 在内存（刷新就没），localStorage 在硬盘（刷新还在、关浏览器还在）
+- **同步但不触发渲染**：`ref.current = x` 和 localStorage 写入都是同步的；但 React 不监听 ref/localStorage 变化，改了不会自动更新界面 → 要更新界面必须 setState
+- "不触发渲染"容易被误记成"异步"，但本质不同：异步 = "要等"，ref = "React 不看，永远不更新"。**解药不同：异步靠等，ref 靠换 useState**
+- 验证实验：关服务器后页面能打开 → 一度以为是缓存魔法 → 实际是 TaskStop 没杀干净 node 子进程。教训：前端出现"不该有的行为"，先验证环境再怀疑代码
+
+#### 7. 自定义 Hook 不是单例
+- 每调一次 useFavorites() 都是独立实例，有自己独立的 state
+- "多组件看到相同收藏"靠的是 localStorage 桥梁（各自读写），不是共享实例
+- 实验验证：左上角组件自己调 useFavorites，App 也调 → 收藏时左上角不更新（独立），底部 FavoritesBar 接收 prop 则实时更新（共享 App 那份）
+- 正确做法：状态提升——只在 App 调一次 Hook，数据通过 prop 往下传
+
+#### 8. useCallback + memo
+- useCallback 解决：函数每次渲染都新建，传给子组件时 prop "看起来变了"，让 React.memo 失效
+- 三条件缺一无效：函数传给 memo 子组件 + 子组件有 memo + 函数稳定
+- 我们项目的 useCallback 大多没用（PokemonCard 没 memo），是代码风格不是性能必需
+- memo 有成本（对比 prop），不是越多越好。重组件 + 稳定 prop 才值得用
+
+#### 9. 多级 await + 树遍历（进化链）
+- PokeAPI 的进化链要 3 步：pokemon.species.url → species.evolution_chain.url → chain 数据
+- 用 while 而不用递归：进化链主要是一条线，while 更简单高效，也更适合（递归适合复杂分叉）
+- 已知局限：`evolves_to[0]` 只取第一分支，伊布那种多分支进化只显示一条
+
+### 工程流程上的重大教训：MR 协作规范
+
+这次老师在 MR 反馈里点了 5 条规范，我之前全没做好，属于低级错误。已永久写入 `C:\Users\asus\.zcode\AGENTS.md`。
+
+**老师的要求（每条都对应"review diff 时看什么"）**
+1. 不提交 node_modules/.npm_cache/.ai/.claude
+2. jsx/tsx 不混用
+3. commit/MR title 简短、尽量英文
+4. title 用规范前缀：`feat:` 新增 / `fix:` 修 bug / `refactor:` 重构 / `chore:` 杂项
+5. 不擅自改既有代码结构（case by case，默认只增不改）
+
+**最核心的教训：提交前必须 review diff**
+- "我自己看了"不算数，必须把 diff 完整展示给用户，用户确认后才提交
+- diff 会暴露 AI 的 3 个陷阱：偷偷改了没要求的东西、删了不该删的、提交了垃圾文件
+- 这次的真实问题：把 `catchOne` 改名成 `fetchOne` 没在注释里说明 why → 补了注释解释每处改动理由
+- 类比：diff = 提交前的开箱检查，闭着眼签字可能签下大问题
+
+**修复对照**
+| 之前的问题 | 修复后 |
+|---|---|
+| commit 中文长句 `feat: 完成 Connecting APIs 作业...` | `feat: add pokedex search, favorites, evolution and theme toggle` |
+| MR title 同样中文长 | `feat: add pokedex search, favorites, evolution and theme` |
+| 改了老师 catchOne 没注释 | 补了 4 处注释解释 why |
+| 没 review diff 就提交 | 流程固化：AI 写完 → 展示 diff → 用户确认 → 才提交 |
+
+### 部署上线的折腾（3 个平台的真实坑）
+
+| 平台 | 结果 | 坑 |
+|---|---|---|
+| Vercel | ❌ | 国内访问超时，被墙 |
+| 腾讯云 COS | ❌ | 2024 新政策：默认域名强制加 `Content-Disposition: attachment`，HTML 被当文件下载，必须绑备案域名 |
+| EdgeOne Makers | ✅ | 国内可访问，免费永久；但**默认链接带 token，约 3 小时过期**（`eo_time` 时间戳 + cookie Max-Age=10800） |
+
+- EdgeOne 链接过期的本质：token 里编码了签发时间，服务器验证超 3 小时就 401。免费版用短期 token 限制白嫖
+- 兜底方案：FEATURES.md 里写了"本地运行"说明，链接失效老师能本地跑
+
+### 认知里程碑
+- **从"会用 React"上升到"理解 React 设计哲学"**：搞懂了 useState/useEffect 为什么这么分工、副作用为什么要关进 effect、闭包陷阱的本质
+- **"重渲染"和"effect 重跑"是两件事**：这是最容易混淆的点，搞清楚后 useEffect 依赖数组的所有规则都能自洽推导
+- **ref 同步但不触发渲染**：这个细节纠正了"ref 异步"的误记，解药是换 useState 而不是"等"
+- **AI 代码必须人审**：不看 diff 就提交 = 把责任完全交给 AI，老师点的"低级错误"本质是缺少工程协作意识
+
+### 涉及的提交和操作
+- 仓库：`connecting-apis-and-building-dynamic-ui`
+- 分支：`yuyao-homework` → `main`
+- MR #6：`feat: add pokedex search, favorites, evolution and theme`
+- 部署：EdgeOne 项目 `pokemon-homework`（makers-8oztebmh5gq3）
+- AGENTS.md 新增"团队协作与提交规范"7 条（永久生效）
+
 
