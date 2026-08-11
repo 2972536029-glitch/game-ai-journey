@@ -920,4 +920,386 @@ onDone 不写进依赖数组 → 闭包陷阱 → 到 0 时调的是第一次的
 - 部署：EdgeOne 项目 `pokemon-homework`（makers-8oztebmh5gq3）
 - AGENTS.md 新增"团队协作与提交规范"7 条（永久生效）
 
+---
+
+## Session 9 (2026-08-06) — Xsolla QA 入门实战课 + 课后作业
+
+> 仓库：`school-gitlab.xsolla.dev/bj-xsolla-school/qa-training`（克隆到 `D:\xsolla\qa-training`）
+> 课程性质：和前几周的开发课不同，这周是 **QA（质量保证）** 课，重点是"找 bug"的方法论 + 写专业 Bug 单。
+
+### 课程内容（讲义 `slides/学生版.html` 30 页）
+
+| # | 主题 | 核心认知 |
+|---|---|---|
+| 01 | 为什么需要 QA | 三个真实事故（12306 春运、B 站 2021 崩溃、优惠券被薅千万）的共同点：**功能测过了不代表系统没问题**——崩在容量、边界、职责缝隙 |
+| 02 | QA vs Testing | QA = 面向**流程**、**预防**缺陷、贯穿全程；Testing = 面向**产品**、**发现**缺陷、特定阶段。测试是 QA 的一部分 |
+| 03 | Bug 的发现与描述 | **严重性**（影响多大，QA 定）≠ **优先级**（多急，产品定）。一份好 Bug 单 = 实际 vs 预期 + 可复现步骤 + 环境 + 截图 + 根因 |
+| 04 | 用 AI 提升 QA | AI 列场景/整理 Bug 单/读需求挑歧义；但**4 件事绝不交给 AI**：贴真实数据、判断算不算 Bug、不审就合代码、编测试报告 |
+| 05 | 收尾 | 质量是团队的事；AI 是副驾驶，判断和责任始终在人 |
+
+**三个核心思考题的答案**：
+1. QA ≠ 测试（范围/目标/阶段都不同）
+2. 严重性 vs 优先级是独立的——"很严重但不急修"完全可能（如冷门页面崩溃）
+3. 好 Bug 单最关键的：**说清"本该是什么"（预期结果）**，开发才知道改到什么程度
+
+### 课上实战：buggy-shop（游戏充值站）
+
+- 凭直觉找 bug → 拿"测试检查清单"再找一轮，对比**有方法 vs 没方法的覆盖面差距**
+- 我从代码挖出 12+ bug，对照清单又挖出 8 个（共 20 个）
+- 印象最深的对应关系：
+  - **边界值（0/负数）** → 数量输 -3，应付变负
+  - **类型也是边界** → 6.60×3 = 19.799999999999997（浮点残留）
+  - **文案 vs 行为** → "充值成攻"错别字；说锁定实际没锁
+  - **功能之间那条缝** → 摘要显示 total()，支付传 subtotal()，用了券白用
+
+### 课后作业：homework-site（发行商后台，30+ bug）
+
+**任务**：找出最严重的 10 个，按 Bug 单模板写成正式报告提交。
+
+**方法论落地**：老师的"找 bug 8 条提醒"全部命中——
+1. 两个页面的数字对不对得上 → 订单数 128 vs 实际 124
+2. 翻到最后一页 → 同上
+3. 导出文件打开看 → CSV 金额被 Math.round 取整
+4. 排序点一下 → 金额按字符串字典序排
+5. 筛选边界（同一天）→ 起止同日筛出 0 条
+6. 表格混着两种币种 → USD 当 CNY 直接相加
+7. 状态流转（取消提现）→ 余额不退回 + 超额仍入库
+8. 文案 vs 实际行为 → 手续费规则说"最低¥1"实际算 0；状态选项"退款"不存在；成长率 Infinity%
+
+### 提交的 10 个 Bug（按严重度排序）
+
+| # | Bug | 严重性 | 优先级 |
+|---|---|---|---|
+| 01 | 概览收入把 USD 当 CNY 相加 | 严重 | P0 |
+| 02 | 提现超额仍入库 + 取消不退余额 | 严重 | P0 |
+| 03 | 订单数 128 vs 实际 124 | 严重 | P0 |
+| 04 | 金额排序按字符串字典序 | 严重 | P1 |
+| 05 | 同日筛选结果为空 | 严重 | P1 |
+| 06 | 时间固定 UTC（差 8 小时） | 严重 | P1 |
+| 07 | 状态筛选「退款」无效 | 一般 | P1 |
+| 08 | CSV 金额被四舍五入 | 一般 | P2 |
+| 09 | 手续费低于最低 ¥1 | 一般 | P1 |
+| 10 | 成长率显示 Infinity% | 轻微 | P2 |
+
+### 工程协作上的新进展
+
+**1. 数据验证不能靠肉眼/想当然**
+- 一开始我读代码算出"收入 ¥18970.74"，用户实测打脸——我**漏算了 data.js 里 country/method 字段消耗的随机数**，导致后面所有数据错位
+- 教训：数据生成用固定种子 + 多个字段共用一个 rnd()，**漏掉任何一个字段的 rnd() 调用，后续全错位**。必须一字不差照搬源码复算
+- 纠正后用 Node 把所有关键数字算准（¥13741.69 / 124 条 / 退款 16 笔等），作为写 Bug 单的铁证
+
+**2. "光看截图说不清"的 Bug 要给证据链**
+- Bug 06（时间 UTC）单靠页面截图无法证明——页面上就是一串数字，没标时区
+- 解决：在 F12 Console 跑 `new Date(TRANSACTIONS[0].ts).toString()`，输出 `GMT+0800 中国标准时间`，和页面对比形成铁证
+- 遇到 Chrome/Edge 安全拦截 `allow pasting`，**这个细节也要写进 Bug 单的复现步骤**（不能只在对话里说）
+
+**3. AI 写的内容用户要逐张核对**
+- 我用图像分析核对了全部 18 张截图，发现 1 处我自己的疏漏（Bug 06 文件名引用和实际文件名不一致），当场改 md 引用对齐实际文件
+
+**4. 提交规范的严格遵守**
+- 文件名严格按老师要求 `bug-01.md`（不带中文描述，虽然带描述更直观但不符合字面要求）
+- 速查表/bug-reports 等辅助文件**不进作业**（只 add 老师规定的 bug-*.md + screenshots/）
+- 分支 `HomeWork/yuyao`、commit `feat:` 前缀、MR title `HomeWork: yuyao`，全部对齐规范
+- **零改动老师原代码**：28 个暂存文件 100% 在 `homework-submissions/` 下
+
+### GitLab vs GitHub 的坑（新认知）
+
+- `gh` CLI 只管 GitHub，对 GitLab（`school-gitlab.xsolla.dev`）无效
+- GitLab 建命令行 MR 需要 `glab` + Personal Access Token，本地没装 glab
+- **结论：GitLab MR 最优解是网页点**（一键直达链接 + 内容备好），比装工具+生成 token+给 AI 更快更安全
+- token 是账号钥匙，**绝不该交给 AI**——这是 AGENTS.md 合规红线的具体场景
+
+### 涉及的提交和操作
+- 仓库：`qa-training`（克隆到 `D:\xsolla\qa-training`）
+- 分支：`HomeWork/yuyao`
+- commit：`feat: add QA homework - 10 bug reports for publisher dashboard`（28 文件，561 行）
+- MR #1：`HomeWork: yuyao`（该仓库第一个 MR）
+- 目录结构：`homework-submissions/yuyao/bug-01.md ~ bug-10.md` + `screenshots/`（18 张）
+
+### 知识点沉淀
+- **测试检查清单 6 大类**：输入框 8 种 / 按钮 5 种 / 业务规则 / 串起来测 / 换视角 / 最后扫一眼——这套清单以后找 bug 直接套
+- **Bug 单判断标准**："别人照着步骤操作，不需要回来问你第二遍"——写完自己按步骤走一遍
+- **找 bug 的核心思维**：好奇（输 0 会怎样）+ 破坏欲（想办法搞挂）+ 换位（薅平台的人怎么用）+ 细节控 + 会表达
+- **正常路径谁都会走，Bug 都藏在"不该这么用"的地方**——这是这门课的魂
+
+- **当前阶段**：Xsolla QA 入门课完成 + 课后作业已提交 MR
+- **待办**：
+  - [ ] 等 MR review（老师可能挑刺，按 Session 5/7 补充的经验逐条修复）
+
+---
+
+## Session 6 补充 (2026-08-08) — Data Persistence 作业 Review：8 条评审 + 教科书 vs 工业界的系统性反思
+
+### 背景
+第三周的数据持久化作业（MR !16）被老师 s.han review，挑了 8 条。这次 review 的含金量极高——**8 条里有 6 条是同一个主题：教科书写法 vs 工业界做法的分歧**。逐条修复 + 在 MR 回复 + 深度讨论，把每条背后的工程原理吃透了。
+
+**最值得记录的一点**：这次 review 推翻了 Session 6 笔记里我自己之前总结的好几个结论（ENUM 好、外键有用、FOR UPDATE 防超卖）——不是之前的知识错了，而是之前只停留在"教科书层面"，没到"工程层面"。
+
+### 老师的 8 条 review + 修复
+
+**① schema.sql — 原题是三个 session，不是两个**
+- 原代码：我把原题简化成了"两个 session 对照"（场景 A/B），还自创了执行顺序
+- 老师原话：「再看一下原题，是三个 session，而且即使只说前两个 session，你这个执行顺序也和原题要求的不一样。」
+- 修复：按 slide 8 /《MySQL 实战 45 讲》第 8 讲重写为三 session（事务 A/B/C，T1→T10）：A/B 用 `WITH CONSISTENT SNAPSHOT`，C 是普通事务先 update + commit，B 再 update + select，最后 A select。
+- **核心知识点（见下方深度讨论 1）**：为什么 A 看到 k=1、B 却看到 k=3？——快照读 vs 当前读。
+
+**② goods_orders.sql — DECIMAL 长度**
+- 老师原话：「decimal 每 9 位 4 字节……你这里已经定义了小数点前 8 位，那或者就定义成 9 位，反正占用空间是一样的。不是什么大问题，知道一下就可以了。」
+- 修复：`(10,2)` → `(9,2)`。
+- **核心知识点（见下方深度讨论 2）**：DECIMAL 的字节是阶跃式增长的，跨过 9 位边界会多 1 字节。
+
+**③ goods_orders.sql — category 别用 VARCHAR，建独立表**
+- 老师原话：「category 的可选值是相对固定、稳定的，在每个商品上重复保存这些字符串既浪费空间，性能也不够好。可以像你处理 user 那样，单独建表。」
+- 修复：新建 `categories(id, name)` 表，goods 的 `category VARCHAR` → `category_id INT` 引用。
+- **核心知识点**：数据规范化（第三范式）——别在多处重复存同一份信息。
+
+**④ goods_orders.sql — state 别用 ENUM，用 TINYINT**
+- 老师原话：「为什么用 enum？课上是不是说过状态字段用 tinyint 比较合适？用 enum 的话，新增状态怎么办？修改线上的表结构吗？」
+- 修复：`ENUM(...)` → `TINYINT`，Go 用 `type OrderState int8` + 常量映射 + 写入前校验。
+- **核心知识点**：这条**直接推翻了 Session 6 笔记第 3 条**（之前我总结"ENUM 省空间有约束，适合状态字段"）。真相见深度讨论 3。
+
+**⑤ goods_orders.sql — 一个订单不该只有一种商品，建关系表**
+- 老师原话：「一个订单只能有一种商品吗？应该创建一张关系表，保存 order 和 goods 的多对多关系。」
+- 修复：把 goods_id/quantity 从 orders 移出，新建 `order_items(order_id, goods_id, quantity, unit_price)`，`CreateOrder` 改成接收多种商品。
+- **核心知识点**：多对多关系必须建关系表；unit_price 存价格快照（**这条 Session 6 笔记第 6 条其实提过**，但当时只停在"知道"，没真正落地到表设计）。
+
+**⑥ goods_orders.sql — 删掉 idx_state_time 索引**
+- 老师原话：「state 这种 cardinality 极低的字段，不适合创建索引，即使是多字段索引，也一样。」
+- 修复：删掉 `KEY idx_state_time (state, time)`。
+- **核心知识点（见下方深度讨论 4）**：索引的价值取决于 cardinality（区分度），低基数列建索引是累赘。
+
+**⑦ goods_orders.sql — 不要定义外键**
+- 老师原话：「不要定义外键，对性能和操作，都非常不友好。」
+- 修复：删掉两个 `FOREIGN KEY` 约束。
+- **核心知识点**：这条**直接推翻了 Session 6 笔记第 5 条**（之前我总结"外键主动拒绝脏数据，有用"）。真相见深度讨论 5。
+
+**⑧ crud/orders_repo.go — 不要用 SELECT ... FOR UPDATE**
+- 老师原话：「大多数情况下都不需要 for update，很可能也不允许使用，因为 select for update 容易造成死锁。」
+- 修复：去掉 `FOR UPDATE`，改成乐观锁 `UPDATE goods SET stock = stock - ? WHERE id = ? AND stock >= ?`，靠 RowsAffected 判断超卖。
+- **核心知识点**：这条**直接推翻了 Session 6 笔记第 8 条**（之前我总结"FOR UPDATE 防超卖是核心手段"）。真相见深度讨论 6。
+
+### 深度讨论的知识点
+
+**1. 快照读 vs 当前读（作业一的灵魂）**
+- 困惑："为什么 A 和 B 都用了 `WITH CONSISTENT SNAPSHOT`，A 看到 k=1、B 却看到 k=3？"
+- 解答：关键在于**读的方式不同**。A 在 T9 是普通 SELECT（**快照读**），读的是 T1 建的快照，所以是旧值 k=1；B 在 T6 是 UPDATE（**当前读**），当前读不受快照约束，读到 C 已提交的最新值 k=2，+1 = 3。
+- **我总结出一条规则**（这条规则让我彻底懂了 REPEATABLE READ）：
+  - 我没动过的行 → 从始至终读到的都是快照里那个值（不管别人怎么改）
+  - 我自己改过的行 → 在我这个事务内，它就是我改后的值，后续读、后续写都基于这个新值
+- **关键认知**：UPDATE/DELETE/`SELECT...FOR UPDATE` 都是当前读，只有普通 SELECT 是快照读。记忆口诀："**写操作 + 加锁的读 = 当前读；普通查 = 快照读**"。
+- 一个反直觉的点：B 在 T7 的 SELECT 看到 k=3，是因为**快照读始终能看到本事务内自己做的修改**。所以 B 的快照读看到 3，不是因为快照失效了，而是因为这行是自己改过的。
+
+**2. DECIMAL 存储的字节计算（最实用的细节）**
+- 规则：小数点左边的整数部分、右边的小数部分，各自独立按"每 9 位 4 字节"打包，不足 9 位按表递增：
+  | 剩余位数 | 字节 |
+  |---|---|
+  | 1~2 | 1 |
+  | 3~4 | 2 |
+  | 5~6 | 3 |
+  | 7~9 | 4 |
+  | 10~18 | 5 |
+- 关键：**7、8、9 位都是 4 字节**——这就是老师那句话的本质。
+- `(10,2)`：整数 8 位(4字节) + 小数 2 位(1字节) = 5 字节
+- `(9,2)`：整数 7 位(4字节) + 小数 2 位(1字节) = 5 字节（一样！）
+- 常见误区：很多人以为 `DECIMAL(10,2)` 是"10 位整数 + 2 位小数"。**错！** 是"总共 10 位，其中 2 位小数"，整数部分 = M - D = 8 位。
+- **更深一层（我自己追问出来的）**：那为什么不把范围尽量写大？答案——**跨字节边界（9→10 位）字节会阶跃式增长**。10 亿行的流水表，金额从 `(9,2)` 改 `(11,2)` 就多 1GB。而且过大的范围会让脏数据合法混进来（schema 是数据正确性的防线）。
+
+**3. ENUM vs TINYINT：为什么状态字段该用 TINYINT（推翻旧认知）**
+- Session 6 笔记里我总结"ENUM 省空间、有约束、查询快，适合状态字段"——**这只对了一半**。
+- ENUM 的致命伤：**加新状态要 ALTER TABLE**。线上大表 ALTER 是噩梦（可能锁表几小时）。而状态字段几乎肯定会扩展（以后加"退款中"）。
+- TINYINT 的优势：加状态只改应用层常量，表结构纹丝不动。而且 TINYINT 也是 1 字节，ENUM 省不了多少。
+- **"TINYINT 不安全，随便一个数字都能存进去"的担心怎么破？**——应用层三道防线：①类型系统限制（自定义 type + 常量）②写入前校验 ③API 层拦截。ENUM 的约束力看似是优点，但工业界更愿意把"状态合法性"放应用层，换取"加状态不改表"的灵活性。
+- **哲学**：表结构是"难改"的（线上 ALTER 是噩梦），凡是"可能变化的约束"别焊死在 DDL 里。
+
+**4. 索引与 cardinality（区分度）**
+- cardinality = 这个列里"不重复的值有多少种"。state 只有 5 个值 → cardinality 极低。
+- 索引的价值取决于"能过滤掉多少数据"。state 查某个值还是要扫 ~20% 数据，索引过滤收益小，反而增加写入时维护索引的开销。
+- 联合索引遵循"最左前缀"原则，第一列的 cardinality 决定整体过滤能力。`(state, time)` 第一列 state 极低基数 → 拖垮整个索引。**木桶效应：最短的那块板决定整体。**
+- 判断口诀：建索引前问"这列能过滤掉多少数据？" 过滤不到 1% 以下不划算。
+- 极端例子：`is_deleted`(0/1) 查 `is_deleted=0` 还是要扫一半数据，建索引是累赘。
+
+**5. 外键：逻辑外键 vs 物理外键（推翻旧认知）**
+- Session 6 笔记里我总结"外键主动拒绝脏数据，有用"——**这次被推翻**。
+- 关键区分（我复盘后理清的）：
+  - **逻辑外键**（user_id、goods_id 这些列，用于 JOIN）→ **必须留**，不然没法关联
+  - **物理外键**（FOREIGN KEY 约束，数据库强制检查）→ **工业界几乎不建**
+- 物理外键的代价是持续的（每次写入多一次检查 + 锁，运维时清表/删数据/分库都被锁死），收益是偶发的（万一应用层有 bug 兜底）。**用持续的大代价换偶发的小收益，不划算。**
+- "应用层 bug 导致脏数据怎么办？"——**修应用层的 bug 就好了**。不能因为"可能在应用层出问题"就给数据库背永久包袱。这是工程权衡。
+- **哲学**（这条是我自己总结的，老师没直接说但贯穿始终）：**逻辑关联少不了，但业务约束归应用层，不靠数据库强制。**
+
+**6. 悲观锁 vs 乐观锁 + 死锁的本质（推翻旧认知 + 大开眼界）**
+- Session 6 笔记里我总结"FOR UPDATE 给行加写锁，是我们代码里防超卖的核心手段"——**这次被彻底推翻**。
+- **死锁是怎么产生的**（这个我之前完全没搞懂）：
+  - 死锁 ≠ 库存不够。死锁 = 循环等待。
+  - 经典场景：用户 A 买"键盘+鼠标"（先锁键盘再锁鼠标），用户 B 买"鼠标+键盘"（先锁鼠标再锁键盘）→ A 拿键盘等鼠标，B 拿鼠标等键盘 → 互相等，永远等下去 → 死锁。
+  - **关键认知**：死锁和"冲突频率高低"无关，只要"多行加锁 + 顺序相反"就可能发生。冲突频率低只是"概率低"，不是"概率为零"。
+- **乐观锁为什么不死锁**：每条 UPDATE 只在执行瞬间持锁、执行完立刻释放，从不"持有自己的同时等别人的"，所以不会形成循环等待。死锁的充要条件是"持有-等待"，乐观锁每次只拿一把、拿完就放。
+- **乐观锁怎么防超卖**：一条 `UPDATE goods SET stock = stock - ? WHERE id = ? AND stock >= ?`，靠 RowsAffected 判断（0 = 库存不足）。实测：下单 999999 个，条件不成立，RowsAffected=0，事务回滚，库存纹丝不动。
+- **乐观锁的缺点**（我追问出来的）：高冲突场景失败率高，需要应用层重试。所以——
+- **秒杀场景为什么既不用悲观锁也不用乐观锁**：
+  - 悲观锁：单行热点 + 10 万请求串行排队 = 数据库堵死（10万 × 5ms = 500 秒）
+  - 乐观锁：10 万人抢 100 个，99000 个 UPDATE 失败要重试
+  - 工业界解法：**Redis 在数据库前面预扣库存**——内存操作极快（0.01ms vs 数据库 5ms），单线程天然串行无锁，把 10 万请求筛成 100 条成功的再交给数据库。
+- **Redis 为什么快**：①根本原因是**数据在内存**（比硬盘快 10~1000 倍）②单线程无锁开销（内存这么快的前提下，加锁反而成瓶颈）③数据结构简单无 SQL 解析开销。
+- **哲学**：数据库不擅长扛"高并发冲突"，所以工业界在数据库前面加缓冲层（Redis/消息队列/限流），把冲突提前消化。这套思想处处可见（秒杀 Redis 预扣、点赞先写 Redis 定时同步、订单消息队列削峰）。
+
+### 工程决策方法论（这次最大的元收获）
+
+这次 8 条 review 表面上是 8 个知识点，底层是同一个东西——**工程决策的本质是"权衡"，没有银弹，只有"匹配场景的方案"**。
+
+**反复出现的模式**：教科书教你"数据库能做什么"，工业界教你"在大规模下该选什么"。
+- ENUM：教科书"约束取值" vs 工业界"扩展困难"
+- 外键：教科书"保证完整性" vs 工业界"运维噩梦"
+- FOR UPDATE：教科书"防超卖" vs 工业界"死锁炸弹"
+- 索引：教科书"加速查询" vs 工业界"低基数是累赘"
+
+**一句话总结这次的方法论收获**：
+> 数据库只负责两件事——①存数据 ②保证 ACID 事务。剩下的（状态合法性、引用完整性、业务规则）都交给应用层，因为它灵活、可测、易改、不带性能包袱。**逻辑关联（列）少不了；业务约束归应用层，不靠数据库强制。**
+
+### 这次 review 暴露的真正问题（最重要的反思）
+
+这 8 条错，**没有一条是"知识盲区"**——ENUM 的扩展问题、外键的运维代价、FOR UPDATE 的死锁风险，如果我自己想，其实都能想到。那为什么这些错还是出现在了代码里？
+
+**根因：这次代码是 AI 生成的，我没有逐行 review 就提交了。** 问题不在知识缺失，而在流程缺失——**AI 生成 + 人工不 review = 必然带病交付**。
+
+更隐蔽的一层：**AI 写的代码"看起来很专业"**（命名规范、注释齐全、能编译），这种表面专业感会麻痹人，让人觉得"它应该是对的"。但"看起来专业"和"工程最优"是两回事——ENUM 那段代码写得很漂亮，但它就是会在"加状态"时炸。
+
+**应对（已写进 AGENTS.md 全局配置）**：
+1. AI 生成的代码，用户必须逐行 review，尤其对字段类型/索引/锁/事务这类工程决策
+2. review 时要问"这是教科书写法还是工业界主流？有什么取舍？"
+3. 已积累一张"教科书写法 vs 工业界写法"对照表（持续补充）
+
+**老师的角色**：老师不会因为你用了 AI 而扣分，但会因为你"用了 AI 却没 review、交了一堆教科书式的问题"而失望。主动说出来 + 表态会建立 review 习惯，反而把这事变成加分项。**拥抱 AI 而不是逃避，但要把 review 权握在自己手里。**
+
+### 涉及的提交和操作
+- 仓库：`data-persistence`（学校 GitLab `bj-xsolla-school/data-persistence`）
+- 分支：`yuyao-homework`
+- MR：!16「feat: 数据持久化三项作业（全 Go 实现）」
+- 代码 commit：`e91ae13 refactor: address review feedback on isolation and shop schema`（9 文件，+669/-528）
+- MR 回复：8 条逐条回复 + 1 条汇总总结，全部贴到 GitLab 对应 discussion thread
+- 全局 AGENTS.md 更新：新增「工程优先而非教科书写法」「AI 代码必 review」「MR 回复规范」「课程作业总结归档」四节
+- 两个 Go module（isolation / crud）均通过 `go vet` + `go build`，并实跑验证（作业一 k=1/k=3、作业三乐观锁防超卖）
+
+
+---
+
+## Session 10 (2026-08-11) — Xsolla 第五周：Containerization with Docker + CI/CD
+
+> 仓库：`school-gitlab.xsolla.dev/bj-xsolla-school/containerisation-with-docker-and-cicd`（克隆到 `D:\xsolla\containerisation-with-docker-and-cicd`）
+> 课程性质：从"写代码"跳到"交付代码"——把一个 Go web 应用**打包成镜像、搭流水线、部署到 K8s**。整条交付链路动手走一遍。
+> 分支：`yuyao/homework`，tag `v-yao-yu-20260811`，MR !2
+
+### 项目背景
+
+仓库两部分：
+- 根目录：老师演示的 demo（Go web 服务 + Dockerfile + 共享流水线 + K8s 配置）—— **完整参考实现**
+- `homework/`：另一个小 Go 应用（监听 9000，`/healthz` 健康检查，运行时读 `index.html` 模板和 `TAG_NAME` 环境变量）—— **要做的作业**
+
+两份任务（各 50 分）：
+1. 给 `homework/` 写 Dockerfile，本地 `docker build/run` 通过 `curl /healthz` 验收
+2. 在根目录 `.gitlab-ci.yml` 末尾追加 `deploy_homework` job，打 tag 触发部署，首页显示 tag 名
+
+### 知识点
+
+#### Docker / 容器化
+
+- **两阶段构建（multi-stage build）**：builder 阶段（`golang:1.24`，~800MB，带编译器）产出二进制 → COPY 到运行阶段镜像。**核心目的是瘦身 + 隔离构建工具链**（安全只是副产品）。不用两阶段的话，Go 编译器/源码会全被打进最终镜像，体积巨大且全是运行时用不到的垃圾。
+- **`CGO_ENABLED=0`**：编纯静态二进制，不依赖 glibc。这是能跑在 `scratch`/`distroless` 这种无 libc 镜像上的前提。不加会动态链接 glibc，scratch 里直接 `not found` 退出。
+- **Docker 层缓存优化**：`COPY go.mod` + `RUN go mod download` 单独成层，放在 `COPY . .` 之前。因为 Docker 每条指令一层，**任何层变化会让它及下层全部重建**。把"变化频率低的依赖声明"和"变化频率高的源码"分层，改业务代码时依赖层命中缓存、不用重拉。
+- **`EXPOSE` 的真相**：纯文档声明，**不影响端口实际通断**。容器端口通不通完全由 `docker run -p` 决定，`EXPOSE` 只对 `docker run -P`（大写自动映射）和 docker-compose 有参考作用。不写它，`-p 9000:9000` 照样通。—— 这是 Docker 最常见的误解之一。
+- **scratch vs distroless**（关键工程取舍，详见下文个人思考）
+
+#### GitLab CI/CD
+
+- **stages / job / pipeline**：流水线按 `stages`（lint→test→build→deploy）顺序跑，每个 stage 里可以有多个 job。job 是最小执行单元，跑在 `image` 指定的容器里。
+- **rules 决定 job 何时触发**：`if: '$CI_COMMIT_TAG =~ /正则/'` 让 job 只在 tag 触发且格式匹配时跑。这是"部署由人的动作（打 tag）触发"的实现方式 = **Continuous Delivery**（持续交付，区别于持续部署 CD）。
+- **GitLab 预定义变量**：`$CI_COMMIT_TAG`（tag 名）、`$CI_COMMIT_REF_SLUG`（分支或 tag 的 slug，**tag 触发时是 tag 名 slug！**）、`$CI_COMMIT_SHORT_SHA`（commit 短哈希）、`$CI_REGISTRY_IMAGE`（镜像仓库地址）、`$GITLAB_USER_LOGIN`（当前用户名）、`$K8S_NAMESPACE`（项目配的 K8s namespace）。
+- **dotenv artifact**：job 运行时把 `KEY=VALUE` 写进文件，声明为 `artifacts.reports.dotenv`，GitLab 会读取并把这些变量**回填给后续 job 和 environment.url**。这是让"运行时才能算出来的值"（如动态 URL）回填到 yaml 静态字段的标准机制。
+- **tag-guard**：共享流水线里一个 lint stage 的校验 job，用正则把格式不对的 tag 直接拦红。学生 tag `v-<拼音>-<8位日期>`、老师 tag `v-<数字>`，其他格式报错退出。
+
+#### Kubernetes
+
+- **Deployment + Service**：Deployment 管 Pod 怎么跑（镜像、副本、健康检查、env）；Service 管 Pod 怎么被访问（ClusterIP/LoadBalancer、端口映射）。`homework/deploy/k8s.yaml` 模板里用 `---` 分隔同时声明了这两个资源。
+- **`kubectl apply -f` vs `set image`**：apply 是**声明式**（给 yaml，资源不存在就创建、存在就更新），set image 是**命令式**（改已有资源的字段，不存在就 NotFound）。每个学生从零部署自己的 homework，必须用 apply。
+- **`kubectl rollout status`**：阻塞轮询，等新 Pod Ready 或超时。Pod Ready 的判定靠 `readinessProbe`（本作业是 `/healthz`）。这是部署的"健康守门员"——镜像拉不下来或应用启动即退，都会让 rollout 超时失败。
+- **hw-proxy 反代路由**：一个 nginx（`deploy/hw-proxy.yaml`），把 `http://34.102.5.180/<用户名>/` 按路径转发到 K8s service `hw-<用户名>`。所以资源名必须 `hw-` 前缀、URL 用纯用户名。
+
+### 本次作业的核心工程决策（教科书 vs 工业界）
+
+| 决策点 | 教科书写法 | 我选的写法 | 为什么 |
+|:---|:---|:---|:---|
+| 运行阶段基础镜像 | `gcr.io/distroless/static-debian12:nonroot`（demo 用的） | `scratch` + `USER 65532:65532` | **网络环境约束**：gcr.io 国内直连不通。scratch 在 docker.io 走 mirror 能拉。65532 是 distroless:nonroot 的标准 UID，等价复刻非 root 效果 |
+| 用户名转换 | 假设用户名干净 | `tr '._' '--'` + `hw-` 前缀 | **K8s 资源名只允许小写字母/数字/-（DNS 子域名规范）**，我的 GitLab 用户名 `yao.yu` 有点，必须转。这是 deploy job 的隐藏必选项 |
+| rules 正则宽严 | `if: $CI_COMMIT_TAG` 或 `/^v-[a-z]/`（同学 jiefuyang 这么写） | `^v-[a-z][a-z0-9-]*-[0-9]{8}$`（完整匹配） | **双保险**：tag-guard 已挡一遍，rules 再挡一次，防止 `v-数字` 老师 tag 误触发学生部署 |
+| 镜像 tag 命名 | 任意 | `$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA` | **必须跟 build job 对齐**！deploy 拉镜像要和 build 推镜像用完全一样的 tag，否则拉不到。同一 pipeline 里两者看到的变量值一致 |
+
+### Review 反馈 + 复盘
+
+这次作业还没收到老师的 MR review（刚提交），但过程中**自审 + 自我挑刺**收获很大：
+
+1. **tag 命名的乌龙**：第一次打 tag `v-yuyao-20260811`（基于我误以为用户名是 yuyao），部署成功但访问 502。诊断半天才发现 GitLab 用户名是 `yao.yu`（姓在前），`tr` 把点转横杠 → 资源名 `hw-yao-yu`、URL `/yao-yu/`，我给的 `/yuyao/` 是错的。**教训：用 `$GITLAB_USER_LOGIN` 的代码本身没问题（自动适配），错的是我"想当然"地假设了用户名。** 重打 `v-yao-yu-20260811` 跟用户名统一，tag/URL/资源名全一致。
+
+2. **gcr.io 拉不下绕路**：第一次 build 失败 `gcr.io 超时`，挂代理也只解决一半（代理只监听 127.0.0.1，WSL 里的 daemon 通过 host.docker.internal 连不进去 → 拒绝连接）。最终方案：换 scratch + 配 daemon.json 加国内 mirror（`docker.1ms.run` 等）。**这件事的真正教训不是"scratch 更好"——而是"约束下找刚好够用的解"。** scratch 没 CA 证书/时区数据，但这个 app 用不上，所以无功能损失。
+
+3. **build job 的 TLS 偶发失败**：tag 触发的 pipeline 全绿，但分支 push 触发的那条 build job 报 `x509: certificate signed by unknown authority (docker:dind CA)`。这不是我的代码问题（build job 是老师写的共享流水线），是 dind CA 的偶发问题，重跑（重打 tag）就好了。—— 验证了课上那句话"本地能跑 ≠ 别处能跑"，反过来 CI 偶发失败也不一定是代码问题。
+
+4. **自审注释的严格度**：老师要求"每行都要写注释，证明你学会了"。我第一版注释其实够用，但自审发现 3 处偏简略（`stage: deploy`、`environment.name`、rules 正则没拆解），主动补全 + 把"两个差异"扩成"三个差异"对齐讲给用户的内容。**老师在意的就是这种"逐行证明懂"的细节。**
+
+### 个人思考 / 方法论
+
+#### 1. "教科书正确" vs "工程现实约束"——这次最深的体会
+
+demo 用 distroless，是因为 demo 跑在 GitLab CI（Google Cloud）上，能访问 gcr.io。**教科书/课程演示默认环境理想**，但在我的现实约束（中国大陆本地构建）下，distroless 拉不下来。
+
+正确的思考链不是"scratch 更小所以更好"（那是事后找理由，顺序反了），而是：
+```
+我想用 distroless（老师演示的、更稳妥）
+  → 但本地拉不下 gcr.io
+    → 要么挂代理（代理监听问题），要么换镜像源
+      → 评估 distroless 多出来的功能 app 用不用得上
+        → 用不上（不发 HTTPS、不处理时间）
+          → 换 scratch，功能无损
+```
+**真正的工程思维：在约束下找"刚好够用"的解，并诚实承认代价**（scratch 没 CA 证书/时区数据；CI 里其实可以用 distroless，本地妥协不等于 CI 也得妥协）。
+
+#### 2. "自动化验证" 的价值——tag 乌龙的快速定位
+
+如果纯手动部署，tag 写错可能要花几小时排查。但这次靠 deploy job 日志里的两行输出：
+```
+deployment.apps/hw-yao-yu created      ← 资源名暴露了真实用户名
+HW_URL=http://34.102.5.180/yao-yu/     ← URL 跟我假设的不一致
+```
+**3 秒定位问题**。CI/CD 不只是自动化交付，也是**自动化留下诊断痕迹**。job 日志、rollout status、环境变量回显，都是事后排查的金矿。设计 CI 时要想着"失败了能不能从日志一眼看出原因"。
+
+#### 3. 声明式 vs 命令式的本质差异（apply vs set image）
+
+之前学 Kubernetes 只记了"apply 是建、set image 是改"，这次真正理解了为什么 demo 用 set image、homework 必须用 apply：
+- demo 是**单实例、预置好、命令行微调**的部署模型
+- homework 是**每人一个、从零创建、模板化批量部署**的部署模型
+
+**两个模型不是语法差异，是部署哲学差异。** apply 配合模板（`homework/deploy/k8s.yaml` + sed 占位符替换）能"一份模板服务全班"，而 set image 做不到。这让我想起数据库的"DDL 焊死 vs 应用层灵活"——K8s 的"set image 焊死单实例 vs apply + 模板支持多实例"是同构问题。
+
+#### 4. "完整交付链路"的全局观
+
+老师说"看懂一个项目的交付链路，先找三个文件：Dockerfile（怎么打包）、.gitlab-ci.yml（怎么测试和发布）、deploy/ 下的 yaml（怎么部署）"。这次三个文件都亲手写/改了一遍：
+- Dockerfile → 打包（任务一）
+- .gitlab-ci.yml → 流水线（任务二）
+- homework/deploy/k8s.yaml → 部署清单（老师给的模板，我 sed 替换）
+
+三块串起来，第一次完整看到"代码 → 镜像 → 流水线 → K8s"的全链路。**比起"会写 Dockerfile"或"会写 CI"，更重要的是理解三块怎么衔接**：镜像 tag 在 build 和 deploy 之间怎么对齐、环境变量名（TAG_NAME vs APP_VERSION）要跟应用代码读的变量一致、访问 URL 怎么被 hw-proxy 路由——**衔接处的细节才是工程问题的多发地带**。
+
+### 涉及的提交和操作
+
+- 仓库：`containerisation-with-docker-and-cicd`（学校 GitLab `bj-xsolla-school/containerisation-with-docker-and-cicd`）
+- 分支：`yuyao/homework`
+- 两个 commit：
+  - `915a57c feat: add homework Dockerfile`（任务一，59 行含注释）
+  - `ec26b71 feat: add deploy_homework job`（任务二，60 行含注释）
+- tag：`v-yao-yu-20260811`（第一次误打 `v-yuyao-20260811`，发现 GitLab 用户名是 `yao.yu` 后重打）
+- Pipeline：#3902（tag 触发，4 job 全绿，用时 1分56秒）
+- 部署地址：http://34.102.5.180/yao-yu/（首页显示 tag 名）
+- MR：!2「feat: homework — Dockerfile and deploy_homework job」
+- 本地环境额外折腾：装 Docker Desktop（下安装包失败重试 5 次）→ 装 WSL2（`wsl --install` 联网失败 → 从 GitHub 下 msixbundle 离线包装）→ 配 daemon.json 国内 mirror（gcr.io 不通绕路 scratch）—— 全程绕了不少网络环境的弯路
+
+
 
