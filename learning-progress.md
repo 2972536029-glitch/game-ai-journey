@@ -1303,3 +1303,96 @@ HW_URL=http://34.102.5.180/yao-yu/     ← URL 跟我假设的不一致
 
 
 
+## Session 11 (2026-08-12 ~ 08-13) — Xsolla 第六周：Kubernetes Basics（环境搭建 + 首个 K8s 作业 + 概念全图速成）
+
+> 仓库：`school-gitlab.xsolla.dev/bj-xsolla-school/k8s-training`（克隆到 `D:\xsolla\k8s-training`）
+> 课程性质：真正进入 K8s——先搞定本地环境（kubectl + kubeconfig），再做 k8s-basics 作业（nginx Pod + 自定义首页），最后把 K8s 全套核心概念用"聊天+类比"方式从零学了一遍。作业 MR !8 已提交待 review。
+> 本次特别之处：**作业是"AI 动手、我看着学"模式**——代码由 AI 敲，但事后要求 AI 把每个概念讲透，作业和学习分两步走。
+
+### 项目背景
+
+三段式的一天半：
+1. **Setup（08-12）**：装 kubectl v1.34.10（对齐集群 v1.34）、迁移 kubeconfig、配 PATH、连集群验证
+2. **作业（08-13 下午）**：k8s-basics 基础 5 条要求 + 2 个加分项（声明式 yaml + ConfigMap 挂载），提交 MR !8
+3. **学习（08-13 晚上）**："我还没学呢"——从云的概念到 K8s 全图，全部用类比过一遍，再对照老师 PPT 补 8 个盲区
+
+### 知识点
+
+#### 环境搭建（Setup）的工程要点
+
+- **kubectl 版本对齐**：官方支持窗口是集群版本 ±1 minor。集群 v1.34 → 必须装 v1.33~v1.35（推荐 v1.34.x）。Docker Desktop 自带的 v1.36 超窗，老师课上明确说过要换。用 `stable-1.34.txt` 端点锁定 minor 版本。
+- **kubeconfig 三要素**：clusters（总台在哪：server 地址 + CA）、users（我是谁：凭证）、contexts（组合预设：哪个集群+哪个身份+默认 namespace）。文件本质 = 对讲机的通讯录。
+- **kubeconfig 的安全隐患排查**：老师的 kubeconfig 是微信发的，最初 KUBECONFIG 环境变量直接指向微信缓存目录（`xwechat_files/...`）——微信清缓存即失效。正确做法：复制到 `~/.kube/config` 标准位置 + 删掉环境变量。
+- **PATH 优先级（Windows）**：系统级 PATH 拼在用户级前面，想让新 kubectl 盖过 Docker 的，必须改系统级 PATH 并放在最前。
+- **`kubectl auth whoami` + `kubectl get pods` 双验证**：前者验认证（集群认得你），后者验授权（能在 namespace 干活）。学生账号是 namespace 级 serviceaccount，`get nodes` 这类集群级命令被拒是**预期行为**，不是配置坏了。
+
+#### K8s 核心概念（晚上速成，全部用类比打通）
+
+- **云 vs 远程服务器**：远程只说"在哪"（租房），云强调"怎么用"（酒店）：按需开关、按量付费、坏了厂商管、秒级弹性。云三档：裸机（毛坯房）→ 容器平台 GKE（精装房拎包入住）→ Serverless（酒店式公寓）。
+- **多地域三理由**：① 就近连（物理延迟：同城 ~5ms、跨国 150-300ms，光速不可商量）② 容灾（OVH 大火案例：数据只存一地=没存）③ 合规（数据不出境法规）。对应信安课的 RTO/RPO、两地三中心、异地多活。
+- **镜像/容器/Pod 三套娃**：镜像=预制菜包（只读、可复制、消灭"在我电脑上是好的"）；容器=加热好的活实例；Pod=托盘（豆荚）。**Pod 存在的意义**：① 合租房——多容器共享 IP/存储/生死（sidecar 边车模式）② 通用接口——K8s 不绑死 Docker（USB-C 思想）③ 卷声明的挂载点。
+- **数据哲学（本次最值钱）**：镜像永远只读；容器写数据落在"草稿纸"（可写层），容器一删草稿纸撕掉；**想留的数据必须出家门**（卷/ConfigMap/数据库）。无状态（纸杯随便换）vs 有状态（金贵需托管）。原神类比：游戏程序=可重装的容器，账号存档=云端数据库——程序和数据分家是云的第一设计哲学。
+- **命令旅程**：kubectl 只是对讲机，每条命令=一条 HTTPS 请求发给 API Server 总台，总台协调 etcd 账本、Scheduler 分房员、kubelet 管家。一切经过总台=K8s 管几千台机器不乱的秘密。
+- **Deployment**：长期工单（"保持 3 份 nginx 活着"），核心机制=**调谐循环**（对账→发现偏差→修正）。三超能力：自愈（奶妈复活术）、扩缩容（一条命令）、滚动升级（换厨师不停业）。最少 2 副本（滚动升级需要"换的过程中有人接客"）。
+- **Service/Ingress**：Pod IP 随更替变化，Service=固定号码的总机（实时追踪健康 Pod 轮转流量）。三种门：ClusterIP（内线）/NodePort（钉门牌）/LoadBalancer（云上正经正门）。Ingress=按域名/路径分诊的金牌前台。port-forward=调试隧道（依赖本机+VPN+命令不关），生产用 Service。
+- **Kustomize/Helm**：前者"一份底稿+便利贴"（base+overlays 防配置漂移），后者"应用商店"（Chart 安装包+values 选项单）。下个 track 的"three ways to ship"路线：kubectl → kustomize → helm。
+
+#### PPT 对照补盲（8 个点）
+
+1. **Labels & Selectors**：K8s 的胶水。Service 不认 Pod 的 IP/名字，只认标签（`app: web`）。下个作业 Deployment+Service 的 yaml 里 `selector` 和 `labels` 必须对上——新人最常见翻车点。
+2. **Health Probes**：Liveness（死了→重启）、Readiness（没准备好→暂不转流量，滚动升级无缝的核心）、Startup（慢启动保护）。`1/1` 的分母分子就是就绪探针。
+3. **Secret**：ConfigMap 的孪生兄弟，专存密码/token/证书，base64+更严权限。
+4. **VM vs Docker vs K8s**：三个抽象层——整台电脑/一个进程/一群进程。
+5. **DaemonSet/Job/CronJob**：每机一个（日志agent）/干完即走（迁移备份）/定时任务。
+6. **HPA**：机器人看 CPU 自动加减副本，双十一完全体。
+7. **三道门安全模型**：Authentication（你是谁）→ Authorization（RBAC：能干啥）→ Admission（改得合规吗）。`get nodes` 被拒=倒在第二道门。
+8. **SRE**：把运维当软件工程做，用自动化代替人肉。Xsolla 老师全是 SRE 团队的。
+
+**老师推荐的自学资源（PPT 最后一页）**：在线免费练 K8s —— killercoda.com（浏览器直接玩）；kubectl 速查表 —— k8s.io/docs/reference/kubectl/cheatsheet（下个 track 必用）；深入一本书 ——《Kubernetes in Action》(Marko Luksa)；谷歌免费 SRE 书 —— sre.google/books（真实生产系统怎么跑）；职业认证 —— CNCF: KCNA → CKA/CKAD/CKS。
+
+### 实操踩坑记录（Windows + K8s 专属）
+
+| 坑 | 现象 | 解法 |
+|:---|:---|:---|
+| **Git Bash MSYS 路径转换** | `kubectl exec ... cat > /usr/share/...` 报 `D:/Git/usr/share/...: No such file`——Git Bash 把容器内 Unix 路径自动改写成 Windows 路径 | `export MSYS_NO_PATHCONV=1` |
+| **apply 的 OpenAPI 超时** | `failed to download openapi: context deadline exceeded`——apply 默认先下 OpenAPI schema 做客户端校验，VPN 带宽小扛不住 | `--validate=false`（服务端仍校验）；命令式命令不触发 |
+| **官方源单连接限速** | dl.k8s.io 单连接 18KB/s，59MB 要 40 分钟 | aria2c 16 线程 → 3.4MiB/s（**190 倍**），20 秒下完。Google CDN 不限并发，瓶颈是单连接 QoS |
+| **HTTPS 克隆中断** | 大仓库克隆 `curl 56 Recv failure: Connection was reset` | 开 VPN 重试成功；备选浅克隆 `--depth=1` |
+| **IAB 浏览器自动化 GitLab 富文本编辑器失败** | MR 表单 description 编辑器在 IAB 里渲染不出来，force click 把状态搞乱后 reload 也救不回 | **及时 fallback 手动**——title/分支 GitLab 已自动预填，用户手动贴 description+点 Create。教训：自动化状态搞乱后应更早放弃，别反复 reload 折腾 |
+
+### Review 反馈 + 复盘
+
+**MR !8 已提交，老师 review 还没来（待补充）。** 交付前的自审已经抓到并修掉两个问题：
+
+1. **README 命令记录与实际不一致**：第一版 README 里贴的 HTML 是简化版（缺 `.tag` 底部字样、viewport、字体栈），别人照着跑复现不出截图页面。自审发现后改成与实际执行**逐字一致**的版本。教训：**"命令记录"的价值就在可复现，省几行是反向优化**。
+2. **缺 `MSYS_NO_PATHCONV=1`**：实际执行时踩了这个坑，但初版 README 的命令块里没写（只在感想里提）——照抄会失败。补进命令块+注释。和上一条同根源：**记录要如实，不是记"理想版"**。
+
+加分项的一个**主动工程决策**：ConfigMap 挂载的是静态文件，nginx 直接 serve，不经过 shell，所以 `$(hostname)`/`$(cat .../namespace)` 不会展开——加分项 HTML 里 namespace/pod 名是**硬编码**的。权衡：这俩值在本作业固定，硬编码可接受；真要动态需 Downward API + envsubst/nginx sub_filter。**这个"静态 vs 动态"的取舍主动写进了 README 感想**，是加分项最值钱的点。
+
+### 个人思考 / 方法论
+
+#### 1. "先体验再学理论"的学习模式（本次最大特色）
+
+作业做完才发现"我还没学呢"——但反过来，**先跑通了完整流程再学概念，每个概念都有实体可挂靠**：学 Pod 时想起 `my-nginx`，学调谐循环时想起 `kubectl wait`，学数据哲学时想起 ConfigMap 加分项。比纯看 PPT 记得牢得多。（代价：做的时候全靠 AI，自己必须事后补课，不能跳过。）
+
+#### 2. 数据哲学是自己推出来的，不是背的
+
+被问到"原神存档会不会回到镜像里"时，我顺着"镜像只读→容器可写层是草稿纸→草稿纸随容器撕掉"自己推出了"**存数据库（云端服务），不然可写层的数据随服务重启消失**"。这个结论和工业界"无状态计算+外置状态"的架构完全一致——**概念是自己推出来的才算真懂**。
+
+#### 3. 高可用与资源浪费的权衡
+
+"即使浪费一些资源，也要多设副本保证意外不中断"——这就是高可用（HA）的核心思路，再往前一步就是工程权衡：副本数=流量容量+故障余量，不是越多越好（100 副本老板拿账单找你），但最少 2 个（滚动升级需要）。**成本 vs 可靠性的权衡**和数据库课的"教科书 vs 工业界"是同一种思维。
+
+#### 4. AI 动手时代的作业流程
+
+AI 把作业从 2 小时压到 30 分钟，但真正的学习发生在晚上的"诶这个我学过"式追问里。**AI 干活越快，人越要主动补"为什么"层**——否则作业是交了，知识还是 AI 的。（这呼应了 AGENTS.md 里"AI 写的代码必须自己逐行 review"——这次是"AI 做的作业必须自己逐个概念补课"。）
+
+### 涉及的提交和操作
+
+- 仓库：`k8s-training`（学校 GitLab `bj-xsolla-school/k8s-training`，clone 到 `D:\xsolla\k8s-training`）
+- 分支：`homework/yao-yu/k8s-basics`
+- commit：`7fb73a0 Homework: nginx page by yao-yu`（3 files, +173 行：README.md / pod.yaml / screenshot.png）
+- MR：!8「Homework: nginx page by yao-yu」（Open，待 review）
+- 本地环境沉淀：`C:\tools\kubectl\kubectl.exe`（v1.34.10，系统级 PATH 首位）；`~/.kube/config`（脱离微信缓存）；用户级 KUBECONFIG 环境变量已删
+- 作业页面的那句话：「过去是一个幽灵，虚无缥缈，没什么影响力，只有未来才有分量！」——前半句灰色暗淡、后半句亮色高亮，呼应句意
+
