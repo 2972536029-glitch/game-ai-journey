@@ -1396,3 +1396,130 @@ AI 把作业从 2 小时压到 30 分钟，但真正的学习发生在晚上的"
 - 本地环境沉淀：`C:\tools\kubectl\kubectl.exe`（v1.34.10，系统级 PATH 首位）；`~/.kube/config`（脱离微信缓存）；用户级 KUBECONFIG 环境变量已删
 - 作业页面的那句话：「过去是一个幽灵，虚无缥缈，没什么影响力，只有未来才有分量！」——前半句灰色暗淡、后半句亮色高亮，呼应句意
 
+
+## Session 12 (2026-08-18 ~ 08-19) — Xsolla 第六周续:k8s-deploy 课件六站速成 + Kustomize/Helm 双作业
+
+> 仓库:`k8s-training`(分支 `homework/yao-yu/k8s-deploy`,commit `1b52906`,MR !25 已提交待 review)
+> 本次特色:**作业前先完成全量预习**——老师更新了《Deployment with Kubernetes》课件后,按"开始学"教学模式(已固化进 AGENTS.md)六站速成,再做作业时全程"复习+盖章"。中途三次高质量深挖(标签意义/selector 不可变/正门vs隧道)。
+
+### 项目背景
+
+老师 08-18 更新了 k8s-deploy 的课件 PDF 和 demo(kustomize 加了完整 overlays/dev+prod、helm chart 更新)。按约定教学模式分六站学完全部内容(含 PPT 补盲 8 点中的 Labels/Probes 深化),08-19 完成 Kustomize + Helm 两个作业并提交 MR !25。
+
+### 知识点
+
+#### 七种部署方式的纲:"殊途同归"
+
+所有部署方式(命令式 kubectl → YAML apply → Kustomize → Helm → GitOps → CI/CD → IaC)最后都是调 K8s API,区别只在抽象度、自动化、版本管理。学 Kustomize/Helm 不是学新系统,是学"更聪明的写 yaml 的方式"。
+
+#### 命令式与声明式的桥:`--dry-run=client -o yaml`
+
+- 命令式(动词,"去做")快但配置留在 shell 历史里;声明式(名词,"我要")留档可 review 但手写繁琐。
+- `--dry-run=client` = 本地彩排不碰集群(三个零:零成本/零风险/零残留),`-o yaml` 把 kubectl 内部组装的"完整资源描述"吐成标准 yaml。**用点菜的速度拿到菜谱。**
+
+#### Kustomize:底稿与便签
+
+- **核心思想**:相同配置写一份 base(底稿),每个环境一张 overlay(便签),便签只写"跟底稿不同的地方"(thin diff)。渲染=便签贴到底稿上合成最终 yaml,底稿文件永远不被修改(合并只发生在渲染产物里——"菜谱本上永远不写微辣,便利贴贴旁边")。
+- **base 目录页 kustomization.yaml 三件套**:resources(哪些文件算数,不列不算)/ commonLabels(统一盖章)/ configMapGenerator(从文件生成 ConfigMap)。
+- **hash 机关**(最值钱):文件内容变 → hash 变 → ConfigMap 名字自动变(如 web-content-abc123)→ Deployment 卷引用变 → **自动滚动更新**。"改文件=按下发布键",这是"改了配置怎么让 Pod 知道"的标准答案。
+- **overlay 六个快捷旋钮**:resources(指路 ../../base,便签第一句)/ namePrefix(资源名加前缀)/ commonLabels(追加标签)/ replicas / images / configMapGenerator+behavior:replace(换页面)。
+- **单 namespace 多环境防串台**:学校每人一个 namespace,dev/prod 共存靠 namePrefix 改名——但 namePrefix 只改名不动标签,两个 Service 的 selector 都是 app: web 会互相串流量(port-forward 连到哪个环境的 Pod 看运气,且随副本数漂移——"灵异事件")。解法:overlay 各追加 variant: dev/prod 标签,selector 变成双条件 AND(app: web + variant: dev),一票否决。
+- **渲染三步曲**(老师规矩"Always do this first"):`kustomize build`(先看合成成品)→ `kubectl diff -k`(对比线上)→ `apply -k`(下单)。
+- 渲染成品验证法:看 namePrefix 前缀、variant 标签、hash 后缀三件套是否都出现。
+
+#### 补丁的艺术:两种流派
+
+- **战略合并**:写迷你 yaml,按 apiVersion+kind+name 身份证锁定目标,字段级合并(没提的保留,合并不是替换);**列表按 key 认亲**(containers 按 name),不按位置——底稿前面插新容器也不会改错人,"点名册按名字,不按座位号"。`null` 值=删除字段。
+- **JSON 6902**:手术刀,op(replace/add/remove)+path(JSON Pointer 报坐标)+value。path 读法:/spec/template/spec/containers/0/env/0/value="第一个容器的第一个环境变量的值"。适合按位置的精准操作(如删列表某项)。**隐患:坐标会漂移**——底稿前面插东西,索引全错。能 merge 就 merge。
+- 老师 prod 便签两种都用:strategic merge 文件加 resources 块 + JSON 6902 内联改 TIER 和探针周期。
+
+#### Helm:K8s 的应用商店
+
+- **五概念**:Chart(安装包)/ Repository(商店)/ Release(装进集群的实例)/ Values(选项单)/ Templates(带坑的模板)。
+- **官方类比(自己推出来的)**:Chart : Release = 镜像 : 容器——一个模板装N次=N个独立实例,同 namespace release 名唯一所以资源名天然不撞。
+- **模板三种坑**:`{{ .Values.x }}`(从选项单取)/ `{{ .Release.Name }}`(从这次安装本身取——release 名自动当前缀,等效 Kustomize 的 namePrefix)/ 带逻辑的坑(管道)。
+- **管道流水线**:`值 | default X | quote`——default=空值兜底站,quote=加引号站(yaml 裸值易误读),nindent N=摆盘站(嵌多行文本要换行+缩进,yaml 缩进敏感)。`{{- -}}` 减号=吸空行(排版卫生)。
+- **双版本号**:Chart.yaml 的 version(包装设计的版本,模板改了+1)vs appVersion(里面装的软件版本)——礼物盒第几版设计 vs 里面 iPhone 几代。
+- **_helpers.tpl 与双标签组件**:define/include=模板内的函数(消灭模板内部复制粘贴)。老师定义 web.labels(全量5个,贴 metadata,信息全可变)和 web.selectorLabels(精简2个,同时进 selector,**永不变**)——因为 **selector 不可变**,含 version/chart 这类每次升级都变的标签进去,升级即断连。"把会变的字段隔离在契约之外"。
+- **Helm 版 hash 机关**:checksum/config 注解——页面文件校验和写进注解,内容变→注解变→自动滚动。与 Kustomize generator hash 异曲同工(殊途同归解决同一问题)。
+- **三板斧命令**:install(装)/ upgrade(升)/ **upgrade --install(幂等合体技,CI 标准姿势——有则升级无则安装,不用写 if)**。
+- **values 优先级**(后说的算):values.yaml(默认)→ -f 环境文件 → --set 临时。类比游戏画质:出厂默认→存的方案→这次手调。
+- **rollback 王牌**:每次升级自动存档(revision),`helm rollback <release> <编号>` 一秒读档。Kustomize 没有存档(回滚靠 git revert+apply 自己搞)——这是 Helm 的胜负手。
+
+#### GitOps:调谐循环升维
+
+- "You don't deploy. Git deploys."——集群里的控制器(Argo CD/Flux)每 1~3 分钟拉 Git 对账,不一致自动修。Deployment 调谐的是副本数,GitOps 调谐的是整个集群。
+- **四大原则**:声明式/版本化不可变/自动拉取/持续调谐(连锁店总部手册+巡店员)。
+- **漂移检测=手贱克星**:有人 kubectl edit 手改生产,3 分钟内被自动还原成 Git 的样子——Git 是唯一真相(single source of truth)。
+- **推 vs 拉**:CI/CD 是流水线推着集群走(凭证在外,风险面大);GitOps 是集群自己来拉(凭证不出集群,更安全)。
+- **救火姿势**:手改必被还原,正解是改 Git 走完整审计轨迹;真火烧眉毛用 break-glass(紧急通道+事后 backfill 回 Git)。半夜手动改不记录→下次同步修复被冲掉→"幽灵复发"惨案的制度性根治。
+
+#### 深挖三连(本次知识密度最高的部分)
+
+1. **为什么需要标签**:K8s 世界"找人"的唯一稳定方式——按 IP 找(Pod 重启就换)和按名字找(名字随机)都是死路,标签是稳定语义("市场部的张三"不是"3楼47号工位")。胶水=两件套:资源贴牌(metadata.labels)+找人方举牌(selector),对上即连接。
+2. **selector 为什么不可变**:它是"归属契约"(凡贴此标签者归我管),身份字段不是状态字段。思想实验:若可变,改 selector 瞬间旧 Pod 成孤儿(没人更新没人删但占资源)+Deployment 按新 selector 数出 0 个又造新的→双份资源+流量还可能打给孤儿→灵异事故。**实证实验**:建 replicas:0 的试验 Deployment 尝试 patch selector,API server 当场拒绝:`field is immutable`(系统级硬校验非君子协定,一切写操作过 API server 无后门)。**边界澄清**(教材懒得区分的):Deployment/ReplicaSet 一族 selector 硬性不可变;**Service 的 selector 其实可改**——改了=手动切流量(金丝雀的人肉手法),不产生孤儿。身份vs状态的分离:状态(replicas/image)可变机器人去追,身份(selector)焊死想换走销毁重建。
+3. **正门 vs 隧道**:demo Service 是 ClusterIP(内线)集群外摸不到,port-forward 是本机临时进程(进程活隧道通)。"正常网页"方式=LoadBalancer(改一行 type,云厂商发公网 IP,淘宝B站每天的打开方式)/Ingress(域名分诊前台)。课程用隧道因为权限/成本/教学聚焦;隧道关了不影响集群里 Deployment 7×24 跑(老师看页面走他自己的通道)。
+
+#### IaC 与决策树(收官)
+
+- IaC 管集群外的世界(VPC/数据库/负载均衡/集群本身):Terraform(HCL 霸主)/ Pulumi(用 TS/Python 写)/ Crossplane(云资源变 CRD,kubectl apply 建 AWS 数据库——K8s 从容器编排器进化成万物编排器)。
+- **总原则**:"Start simple. 加抽象,只在复制粘贴开始疼的时候。"
+- 完整决策树:学习→命令式(+dry-run 生成 yaml);个人项目→纯 YAML;多环境→Kustomize(简单)/Helm(要参数要发布);生产规模化→GitOps(多数团队收敛于 Helm+Argo CD);连云资源→IaC。
+
+### 双作业实战(每步踩在预习的站点上)
+
+#### 作业1 Kustomize(MR !25,端口 8083)
+
+改 demo 的 prod overlay:页面加句子+手打 `Namespace: cn-yao-yu`(Kustomize 无模板语言的亲身体验);JSON 6902 patch 的 TIER `premium→piano`(自己解读过的 path 这次真改了)。流程:渲染预览(验证 TIER/页面/前缀/标签)→ `apply -k`(一次建 ConfigMap+Service+Deployment)→ rollout status → port-forward **svc**/prod-web 8083(连总机不连员工)。按要求不删,Deployment 常驻。
+
+#### 作业2 Helm(MR !25,端口 8084)
+
+scoop 装 Helm v4.2.3。改 chart:模板加 `<p>Namespace: {{ .Release.Namespace }}</p>`(built-in,装到哪自动显示哪,和作业1手打对照=课程主题);句子设 values.yaml 的 message(不硬编码=配置即数据)。流程:`helm template` 本地渲染(亲见占位符替换/namespace 解析为 cn-yao-yu/镜像 tag 走 AppVersion 兜底)→ `helm upgrade --install yao-yu` → rollout status → `helm list`(REVISION 1/deployed)→ port-forward 8084。资源名自动 `yao-yu-web`(.Release.Name 当前缀)。
+
+#### 两工具互为镜像(作业主题"One goal, two ways")
+
+| 同一问题 | Kustomize | Helm |
+|:---|:---|:---|
+| namespace 上页面 | 手打(无模板语言) | .Release.Namespace 免费 |
+| 防撞名 | namePrefix 手写 | release 名自动当前缀 |
+| 改配置自动滚动 | generator hash 后缀 | checksum 注解 |
+| 部署前预览 | kustomize build | helm template |
+| 幂等部署 | apply | upgrade --install |
+
+哲学:Kustomize 坚持纯 yaml 无语言(代价是有些事只能手工);Helm 引入模板语言(代价是要学 Go template)。没有对错只有取舍。
+
+### Review 反馈 + 复盘
+
+**MR !25 刚提交,老师 review 未到(待补)。MR !8(basics)已不在 open 列表(疑已被老师处理,待确认有无评论)。** 交付前自审:
+
+- 截图用视觉模型逐要素验证(8083:地址栏/句子/cn-yao-yu/piano/Kustomize;8084:地址栏/句子/cn-yao-yu/yao-yu/Helm 全过)。
+- 提交前发现并清理误存文件(`新建 BMP 图像.bmp` 残留),敏感文件扫描干净(无 kubeconfig/.env)。
+- 搜索页面中文串时踩了小坑:搜索词被 HTML 标签(`<span class="accent">未来</span>`)打断导致误报 MISSING——教训:**验证"内容在不在"前先想清楚内容在源文件里的真实形态**(被标签打断/编码/转义都会造成假阴性)。
+- **环境零新坑**:对比 Session 11 的 MSYS 路径/OpenAPI 超时/aria2 折腾,本次 apply 未超时、helm 秒装、全流程一次通过——环境沉淀(PATH/kubeconfig/VPN 状态)+ 心里有图,手就不抖。
+
+### 个人思考 / 方法论
+
+#### 1. "作业前先学"模式的验证
+
+Session 11 是"先做后学"(做完才发现没学),这次反过来"先学后做"——效果:作业全程是"复习+盖章",每一步都知道踩在哪个知识点上(改 6902 的 TIER 时清楚知道自己在用"坐标手术刀";port-forward 连 svc 时知道为什么连总机)。**两种顺序都有效但滋味不同:先做后学有"恍然大悟",先学后做有"一切尽在掌握"。理想节奏或许是:第一次接触某个领域先做后学(建立体感),同领域第二次先学后做(建立体系)。**
+
+#### 2. 深挖链的价值:从"会用"到"懂为什么"
+
+本次三连问的路径:双标签有什么意义→为什么需要标签→selector 为什么不可变→是规定还是技术强制(实证)→哪个 selector 才不可变(边界)。每一问都往下挖一层,最后挖到"身份与状态分离"的 K8s 设计哲学。**"会用工具"和"懂工具为什么这么设计"之间隔着一串为什么——主动追问这串为什么,是普通使用者和工程师的分水岭。** 其中自己推出来的类比(Chart:Release=镜像:容器)被确认为官方类比——概念是自己推出来的才算真懂。
+
+#### 3. 教学模式被用户主动固化(元事件)
+
+学完六站后用户主动要求:"以后我说开始学,都按今天的模式教——一点一点,通俗易懂但扎实,可以慢,但东西一定要全。"已写进全局 AGENTS.md(一次一小口/痛点先行/类比开路/真实文件对照/现场实证/每站消化题/忠实记录用户的好类比)。**这个模式的关键配方:慢节奏+高密度(不偷工减料)+互动验证(消化题)+新旧咬合。**
+
+#### 4. 工程直觉的迁移
+
+多个跨领域的同构识别(学习中的"拼图咬合"时刻):selector 按名字认亲不按位置↔按标签找 Pod 不按 IP;Helm 双标签的"会变字段隔离在契约外"↔API 设计的兼容性承诺;GitOps 手改必还原↔"数据只存一处=没存"的容灾原则。**同一设计模式在不同技术里反复出现,识别它们是知识内化的标志。**
+
+### 涉及的提交和操作
+
+- 仓库:`k8s-training`,分支 `homework/yao-yu/k8s-deploy`
+- commit:`1b52906` `Homework: k8s-deploy by yao-yu`(8 files,+90/-4:demo 4 个改动文件 + submissions 4 个)
+- MR:!25(Open,待 review);前作 !8(basics)已关闭待查评论
+- 集群现场:`prod-web` 与 `yao-yu-web` 两个 Deployment 按要求常驻运行
+- 本地环境沉淀:Helm v4.2.3(scoop);教学模式写进 `C:\Users\asus\.zcode\AGENTS.md`
+ 
