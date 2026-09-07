@@ -1745,3 +1745,71 @@ MR !1 **待老师 review**(收到后补 Session 14 补充)。先记作业阶段�
 - commit `1fcdb7c` `feat: solve coding exercises EX1-EX4`;`e6f8adb` `refactor: restructure cmd/dirty into layered services`(8 files,+424/-52,domain/repository/service/transport 四包 + 分层单测 6 个)
 - 判分结构:exercises job 判卷 2 个(老师预写 TestCharge/TestToDTO)+ reference job 全仓库 18 个(参考代码 12 + 我们 EX5 的 6)
 - 本地验证:vet 干净;`go test ./...` 与 `-tags todo` 全绿;真服务冒烟四例(正常列表/非法 user_id 400/注入 payload 400/cursor 续页)
+
+---
+
+## Session 16 (2026-09-02 ~ 09-07) — Xsolla RabbitMQ 陪学:异步处理与消息队列十二站 + queue_demo 作业毕业
+
+### 项目背景
+
+- 课件:《异步处理与消息队列 — RabbitMQ 实战培训》(Xsolla 技术团队,2025 校招实习生培训版,40 页文档型排版),全程基于四个真实生产服务:payment-core / gc-order-service / gc-notification-service / merchant-xsolla-com
+- 形式:12 站陪学路线(课件 9 模块 + 补讲缺失的部署模式 + 动手实践 + 面试总盘点),一次一小口,跨 09-02 / 09-03 / 09-07 三次
+- 调研发现课件质量问题:模块六"部署模式"目录有正文无(陪学时补讲)、大量 Mermaid 图未渲染、部分图片带 CSDN 水印、p15-20 混入教程网站复制残留
+- 产出:毕业考通过;queue_demo 作业完成并提 MR !9;毕业总账.md(面试速记页)
+
+### 知识点梳理(十二站浓缩,每条带机制)
+
+1. **同步 vs 异步**:扣款本身同步(强一致),扣款后一切异步;五大痛点里最致命的是强耦合——"钱扣了却显示支付失败"
+2. **选型**:RabbitMQ=邮局(签收即销毁)vs Kafka=录音机(持久可回放);吞吐差百倍的机制=单件簿记+随机读写 vs 批量+顺序追加+零拷贝
+3. **核心概念**:Exchange 只分拣永不存货;消息的一生分两段旅程(路由段有分拣员/配送段 Broker 直投,requeue 不再路由);vHost=办公室隔离;Channel=TCP 多路复用
+4. **四种 Exchange**:direct 逐字 / topic 通配(点号承重,`steam#` 是静默 bug)/ fanout 广播 / headers 少用;一条消息可被多队列复制签收,各副本独立消费
+5. **ACK 签收制**:取走≠签收(Ready/Unacked);Ack=删除、Nack(true)=重投、Nack(false)=死信;消费者宕机 Unacked 自动回 Ready
+6. **生产端三工具**:Confirms(挂号信回执,只保"进 Broker")+ mandatory(保"进队列",**默认静默丢弃**)+ 持久化三把锁(缺一不可,delivery_mode 默认是 1)
+7. **幂等**:重复不可避免(Ack 丢失→重投;Broker 分不清"做完丢 Ack"和"没做就崩",押宁重不丢)→ 三板斧:贴牌(SET NX 原子认领)/ 贴不上扔副本(Ack)/ 干砸了先拔牌(DEL 再 Nack)
+8. **死信与延迟**:三死法(拒收/TTL 过期/队列满)→ DLX → 告警;延迟 = 无人订阅的重试队列 + TTL + DLX 转寄(Xsolla 180s×20);同队列 TTL 必须相同(只看队头)
+9. **Xsolla 案例**:装饰器把"发消息"焊在"事务提交后"——**脏数据不可逆,缺数据可补偿** → commit-first;装饰器 = MQ 世界的中间件(回收 S4 幂等键)
+10. **部署**:Quorum+Raft 多数派——全票太脆/1 票太险/**过半是唯一窄门**;必须奇数台;Quorum 慢在等多数派→核心队列才用,边角 classic
+11. **实机**:queue_demo 七项测试全绿;CI 排障一次(code_quality 红叉→runner 磁盘满,与代码无关)
+
+### 个性化知识点回顾(真实疑问 + 解答)
+
+- **"Kafka/RabbitMQ 到底是什么"**:不是库,是独立服务器软件,和 MySQL 同一地位;docker run 起一个和跑 MySQL 同一个动作
+- **零拷贝**:"缓存"是内存页缓存;网卡基本不存货但有 DMA(自己伸手去内存取);搬运从 4 次减到 2 次
+- **Schema 隔离 ≠ 事务隔离**(陪学时 AI 口误混用,借机拆清):并发视角的隔离 vs 业务地盘的隔离,一字之差两码事
+- **快照读 vs 当前读**:S6 的坑换马甲重考——变式:A 快照定格后 C 提交 k=2,A 自己 UPDATE k=k+1 走**当前读**基于 2,随后 SELECT 看到自己的 3——**毕业变式满分**,当初栽的坑正式填平
+- **"Token 为什么建不了 MR"**:仓库钥匙 vs API 钥匙——scope 概念;解法沉淀进 AGENTS.md 第 8 条
+
+### Review 反馈 + 复盘(本次无老师 review,以工程取舍对照 + AI 被用户 review 代替)
+
+| 场景 | 教科书/直觉 | 工业界 | 为什么 |
+|:---|:---|:---|:---|
+| 发消息与事务的顺序 | 先发消息"尽早通知" | commit-first(装饰器焊死) | 幽灵订单不可逆(商户发货+玩家见失败+库中无单);缺通知可补偿(补发/对账) |
+| tx 事务机制 | 更"强"更稳 | Publisher Confirms 异步模式 | tx 同步阻塞慢约 250 倍 |
+| 镜像队列 | 主从备份很稳 | Quorum(Raft) | 异步抄送有脑裂风险,4.0 已删 |
+| 失败一律 Nack(requeue=true) | 重试越多越保险 | 坏消息进死信,重试带退避(180s×20) | 无限重投打满 CPU;立刻重投=对宕机下游持续轰击 |
+
+**AI 被用户 review(重要)**:陪学中段用户明说"讲的不清晰,很多题看不出和上面说的有什么联系"——根因是类比叠太多(抢锁/占位/库存/乐观锁轮番上),把主线埋了。修正:一套词走到底(消息 M/告示牌/贴牌/拔牌),每道题标注来自上文哪一段。**教训:陪学的复杂度上限在类比管理,不在知识量;一次只活一个类比。**
+
+### 个人思考 / 方法论(用户高光)
+
+1. **"实验和预测矛盾时,先列举所有死因再定罪"**——重启后消息消失,预测"还在"翻车;用户不纠结表面,对照实验(发 2 条立刻重启→幸存)证明死因是 TTL 老死(队列配 10 分钟保质期,聊天聊超了)而非持久化失败。科学方法全程自主。
+2. **机制型 vs 清单型知识分化**:毕业考卷二(机制推理)满分,卷一(三环节/三死法清单)残缺——"三把锁答得很准,但三环节缺两头"。对策:毕业总账.md 专收清单骨架,面试前扫一页。
+3. **幽灵订单的推导半由用户完成**:自己推出"商户收到完成通知并发货、库里没单",AI 只需补"玩家见失败"一角;不对称性(脏数据不可逆/缺数据可补偿)顺势悟出。
+4. **成本直觉**:主动问"三台服务器存同一份数据会不会太贵"——正确的工程问题;保险费框架 + K8s replicas 同构解答;"4 台容忍力=3 台,纯浪费"由奇数台规则反推。
+
+### 工具/环境坑(可复用,与 S15 记录有连续性)
+
+- Go 构建国内网络:proxy.golang.org 被墙 → Dockerfile 加 `ENV GOPROXY=https://goproxy.cn,direct`
+- **两把钥匙完整解**(S15 只记了现象,本次补全):push-options 免 API 建 MR 之外,API 通道已打通——glscpat- 令牌 + `PRIVATE-TOKEN` 头(Bearer 403),长期存放 `.zcode/secrets/`,硬边界=仅 school-gitlab.xsolla.dev;固化进 AGENTS.md 第 8 条
+- Git Bash 的 `/tmp` 对 Windows python/curl.exe **不可见**——混用必须真实盘路径(D:/...)
+- CI 排障三板斧:总状态 → job 明细 → trace 找第一性错误;对照取证(main 分支 secret_detection 也挂过 = 基础设施锅);Auto DevOps 扫描 job 是 allow_failure,红叉不阻塞合并;已在 MR 留言说明(note 6264)
+
+### 提交记录
+
+- **学校仓库 queue_demo,分支 `yuyao-homework`**:
+  - `e940b8c` chore: use goproxy.cn mirror for go module download(+2 行)
+  - `82e6c83` feat: add yuyao student demo with rabbitmq routing(新增 students/yuyao/yuyao.go 274 行 + main.go 注册 2 行)
+  - 七项实机测试:direct/topic/fanout 路由、消费(Ack)、越权防护 400、anqiang 回归、fanout 补测,全绿
+  - **MR !9**(opened,标题/描述规范,含 CI 排查说明)——待 review
+- 本地环境:docker compose(RabbitMQ + Go app),Docker Desktop 常备启动
+- 学习产物:`D:\xsolla\rabbitmq-training\` 下 12 站学习进度.md、毕业总账.md、课件调研 README.md、全文提取与 40 页截图
