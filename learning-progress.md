@@ -1971,3 +1971,79 @@ MR !1 **待老师 review**(收到后补 Session 14 补充)。先记作业阶段�
 - **工具观**:"既然你觉得用得上,就都装进来,让我在使用过程中体会它的作用"——价值判断交给使用体验,先装后裁,不做纸面推演。
 - **出题方法论**:好问题从自己的实践痛点长出来(90%→99% 的数学直觉、Skill 触发不稳的体感、"开新窗口"的习惯),调研把它们机制化;三题一线——**概率系统上的确定性工程**:输出靠独立验证、工具触发靠措辞钉住、上下文喂养靠经济学管理。
 - **自举是最高强度的测试**:HW3 的 Skill 生成了自己所在 MR 的描述——"基于真实变更、不编造"的要求在自举场景下被最严格检验,而且真被抓出过一次数字错。自己造的工具,第一个用户是自己。
+
+---
+
+## Session 19 (2026-09-15) — Xsolla 可观测性入门课:给 /hello 补齐 Logs / Traces / Metrics
+
+### 项目背景(简略)
+
+课程仓库 `observability-intro`(Go 双服务 demo:A `:8080` → B `:8081`,`/ping` 是埋好样的样例,`/hello`→`/greet` 是裸接口)。作业三道题:EX1 两服务各加一条带 ctx 的日志、EX2 五处改动把 A→B 打通成一条 trace(含手动子 span + 必做断链实验)、EX3 加 `hello.requests` 计数器 + 高基数思考题。`scripts/check.sh` 五项检查 + CI `homework` job 作为通过标志。截止 9-21。
+
+### 知识点梳理
+
+**三大支柱各自回答的问题**:Logs=单点离散事件("发生了什么"),Traces=一个请求跨服务的完整链路("卡在哪一环"),Metrics=可聚合的总量与趋势("整体好不好")。三者靠 **trace_id** 互相咬合:日志里带 trace_id → 一键跳到 Jaeger 里同一条 trace。
+
+**trace 跨进程传播的机制(W3C TraceContext)**:span 活在 Go 的 `context.Context` 里;跨进程靠 HTTP `traceparent` header 携带 trace_id。四个零件各司其职:
+- `otelhttp.NewHandler(...)`:服务端收到请求 → 读 traceparent(如有则挂成调用方的子 span,没有则新开 trace)→ 开 server span 塞进 `r.Context()`;
+- `http.NewRequestWithContext(ctx, ...)`:让**出站请求**知道自己属于哪个 span——没有它后面全白搭;
+- `otelhttp.NewTransport(...)`:出站时把 ctx 里的 span 写进 traceparent header;
+- `tracer.Start(ctx, "build-greeting")` + `defer span.End()`:非 HTTP 的工作段手动开子 span,Jaeger 里多一层可看耗时。
+
+**日志与 trace 关联的开关**:`slog.InfoContext(ctx)` 而不是 `slog.Info`——telemetry 包的 handler 装饰器从 ctx 取 span 的 trace_id/span_id 塞进日志。用 `Info` 就拿不到,这不是 API 偏好是机制使然。
+
+**断链实验(亲手复现)**:把 `NewRequestWithContext` 改回 `NewRequest`,一次 curl 在 Jaeger 里变成两条互不相关的 trace——A 的 `GET /hello` 孤零零一条(1 span);另一条是凭空新开的孤儿 trace(A 的 client span + B 的 3 个 span)。根因:出站请求携带的 ctx 里没有 span,Transport 找不到父 span 只能新开一条 trace 注入 header。**Go 里 trace 靠 ctx 传播,ctx 一丢链路就断**——这是"坑 2"的活体展示。
+
+**高基数坑(思考题)**:Prometheus 里 counter 的每个标签取值组合 = 一条独立时间序列。`http.route="/hello"` 取值固定(低基数)没问题;放用户输入的 `name` 就是无界标签——一万个名字 = 一万条序列,内存和查询都被拖垮。原则:**metrics 标签只放低基数维度(route/method/status),高基数信息(name/user_id)放日志或 trace tag**。trace tag 不预聚合、只存在于被采样的那条 trace 里,所以放得下。
+
+### 个性化知识点回顾(与历届 Session 的咬合)
+
+- **Session 17(稳定性/容量)→ metrics 是"过载时定位"的眼睛**:那次讲容量规划、过载与恢复,靠的就是 QPS/延迟这些指标;这次亲手造了其中一个(请求计数器),理解了指标从哪来、为什么标签选择决定它将来好不好查。
+- **Session 14 补充("check 的假 pass")→ 镜像事件"check 的假 fail"**:那次是检查脚本在错误环境下误报通过,这次是 `check.sh` 在用户 PowerShell 里因为 WSL bash 抢占 + Git Bash 非登录 PATH 缺 coreutils 而**全项误报 ❌**——作业本身是对的。同一个道理的两面:**检查工具本身也会出错,先验证检查环境可信,再信它的结论**。
+- **Session 6 补充 + Session 18(独立错误源 + 人守门)→ 流程落地**:这次 AI 全程先做(写码/自审/check 全绿/断链实验/建 MR 前置证据),用户在提交闸口前坚持"我先自己测试一下确定你通过",亲手跑完三件套才放行 commit。上两次的教训(AI 产物没验证就进提交/数字错)这次被流程挡在了提交前。
+- **Session 18(设计从真实数据长出来)→ 复用既有设施**:EX2 step 2 要求"给 hello 换带 trace 的 client",包里 `/ping` 已有现成的 `tracedClient`——直接复用而不是按 TODO 字面"原地改 plainClient",少一份重复代码。参考答案对照后确认行为等价,且补齐了它有而我没写的错误路径日志。
+
+### Review 反馈 + 复盘(老师尚未 review,先记自查环节)
+
+1. **编辑事故自愈**:改 service-a 时一次 Edit 把一行注释意外搞成两行重复,下一轮编辑立即发现并清理——交付前 `git diff` 里已无痕迹。教训:多段编辑后必须整体重读 diff,不能只看每段编辑的"成功"回执。
+2. **对照参考答案发现自己漏了错误路径日志**:参考版在调 B 失败分支有 `slog.ErrorContext(ctx, "call service-b failed", ...)`,我初版只回了 502。已补上——错误路径的日志更要带 trace_id,否则排障时断链恰恰断在最需要它的地方。
+3. **用户亲手测试暴露三个纯环境坑**:PowerShell 的 `curl` 是 `Invoke-WebRequest` 别名(URI 必须带 `http://`)、`bash` 被 WSL 抢占、Git Bash 用完整路径启动时非登录 shell 导致 PATH 缺 `wc/grep/tail` 全体 coreutils(修法:先 `$env:PATH = "D:\Git\usr\bin;" + $env:PATH` 再跑)。三个坑都会让"作业是对的"看起来像"作业是错的"。
+
+### 提交记录
+
+- `observability-intro`:分支 `homework/yuyao`,commit `282b579`(`feat: instrument /hello with log, trace and counter`,2 文件 +24/−35),MR !2 已建(homework + verify 双 job 绿),MR 按要求不合并,等老师看 CI 和两道理解题;
+- MR 描述已按模板填齐:EX1 双日志、EX2 trace_id+断链解释、EX3 metrics+思考题、check 五项输出;三张 Jaeger 截图存于本地 `D:\xsolla\homework-evidence\`,需在网页上手动拖入 MR(GitLab 图片不上传进仓库);
+- `game-ai-journey`:本条归档。
+
+### 个人思考 / 方法论(用户的行为与观点)
+
+- **"我先自己测试一下确定你通过"**——AI 报告全绿之后、提交之前,用户要求亲自把三件套各跑一遍。这是 Session 6"AI 写的必须自己 review"从口号变成闸口:AI 负责产出,人负责验收,验收动作 = 亲手跑效果而不是看 AI 的截图。
+- **"再去读一遍提交要求"**——提交前不凭记忆,让 AI 重读 MR 模板和 README 提交规范,逐项对表(两处截图位、四项 checklist、分支命名、不合并)。流程意识:规范要对着原文核对,不要对着印象核对。
+- **测试环境即测试对象的一部分**:用户在自己终端里连续踩中 curl 别名、WSL bash、PATH 缺失三个坑,结论不是"作业有问题"而是"先把检查工具修可信再下判断"——与 Session 14 的"假 pass"合并成完整认知:**验证链路上任何一环(工具/环境/AI)都可能是错误源,最终裁决要落在无争议的事实上**(CI 在 Linux Runner 上跑同一脚本,全绿,与本地 Git Bash 环境结果一致)。
+
+---
+
+## Session 18 补充 (2026-09-14) — AI Coding 作业 Review:六条评审 + own words 的教训
+
+### 背景
+
+MR !1(HW2/HW3 作业 + mr-description Skill)收到老师(Dongxue Li)六条评审。逐条修复、逐条回复后,老师回 lgtm。修复 commit:`f963b90`(SKILL.md)、`eb9d2d0`(HW2 重写)。
+
+### 六条评审:为什么当初会错 + 怎么改
+
+1. **Skills 全量入库,还装了个废弃壳**(grill-me 只是重定向壳,真身是 grilling)。当初的想法是"先都装进来,使用中体会";错在没验证就入库。改:删 3 留 8,试用期机制,装前过"安装前四问"。原理:元数据常驻按轮付费,库杂了互相稀释触发信号。
+2. **几百个文件也逐行 review 吗**(讨论题)。当初把小作业养成的"逐行"习惯当成了默认姿势。答:机器门先行(测试/构建证明符合性)→ 风险分级(鉴权/支付逐行,机械改动扫 --stat)→ AI 双轴产出问题清单、人审清单 → 切片交付。替代的是"逐行"动作,不替代"人守门"。
+3. **`.agents/skills/` 在 ZCode 生效吗**(官方文档只写 `.zcode/skills/`)。答:插件文档列了四路径且推荐 `.agents/` 为跨工具标准位置,实测也触发了。由此提出**置信度排序:实测 > 实现层文档 > 概览文档**;信息差成因推测为 docs drift 或刻意的保守承诺(注明推测不保真)。老师此问的深意:测你懂不懂自己的工具。
+4. **description 写了"对齐本人历史 MR",样本从何来**。真实性缺陷:基线分析是编写期动作,却写进了运行时描述,换项目根本没有这个数据源。改:description 只保留运行时行为。原理:description 只写运行时行为——自己 HW2 第 2 题的规则,自己踩坑。
+5. **step 4 与 step 5 规则冲突**(仓库 MR 模板优先 vs 三固定栏齐全,没说谁覆盖谁)。改:优先级链"老师/用户要求 > 仓库 MR 模板 > 默认模板"。原理:规则含糊 = Agent 执行方差,人读大意,机器认真字。
+6. **HW2 成稿是 AI 写的,违反 own words(最重的一条)**。原因链:用户指令"调研完开新窗口做"被操作化成"另一个 AI 会话成稿";agent 忠于字面指令,没有拿作业意图校验流程;"fresh session 没有旧措辞可抄,逼出自己的话"是自欺——句子不是人写的,再新鲜也不是"自己的话"。改:本人重写全部标出段落(数字、来源保留),并在回复里做了两层区分——思想作者(问题、主线、核实)是人,文字作者是 AI;规则约束的恰是文字层。流程修正:文字作业第一遍成稿必须本人写,AI 只出事实卡 + 事后事实核对。
+
+### 元收获
+
+- **"AI 交叉验证不如人跑命令"第二次应验**:第一次是 MR 描述的 per-file 数字错误(两个 AI 会话都没拦住,人跑 `git diff --numstat` 拦住了);这次 own words 同理——问题和数字都是真的,但"话是不是人写的"只有人能裁。
+- **agent 的系统性风险:忠于字面指令,疏于意图对齐**。用户说"高效完成",作业要"检验本人表达",两者冲突时 agent 默认了前者。防它的不是觉悟,是流程规则。
+- **MR 回复流程的演进**:本项目沉淀出"AI 起草 → 用户改 → AI 审 → 通过才发"四步,实际效果:用户改出的"自己踩一次坑下次记得更牢""措辞要贴合事物本身,避免夸大"比 AI 原稿更准。用户的声音是最后的质量门。
+
+### 提交记录
+
+- `f963b90` SKILL.md:description 如实化 + 模板优先级链;`eb9d2d0` HW2 本人重写;六条回复全部挂上原评论线程;老师 lgtm。
