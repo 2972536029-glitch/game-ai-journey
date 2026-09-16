@@ -2076,3 +2076,48 @@ MR !1(HW2/HW3 作业 + mr-description Skill)收到老师(Dongxue Li)六条评审
 - **"我先自己测试一下确定你通过"**——AI 报告全绿之后、提交之前,用户要求亲自把三件套各跑一遍。这是 Session 6"AI 写的必须自己 review"从口号变成闸口:AI 负责产出,人负责验收,验收动作 = 亲手跑效果而不是看 AI 的截图。
 - **"再去读一遍提交要求"**——提交前不凭记忆,让 AI 重读 MR 模板和 README 提交规范,逐项对表(两处截图位、四项 checklist、分支命名、不合并)。流程意识:规范要对着原文核对,不要对着印象核对。
 - **测试环境即测试对象的一部分**:用户在自己终端里连续踩中 curl 别名、WSL bash、PATH 缺失三个坑,结论不是"作业有问题"而是"先把检查工具修可信再下判断"——与 Session 14 的"假 pass"合并成完整认知:**验证链路上任何一环(工具/环境/AI)都可能是错误源,最终裁决要落在无争议的事实上**(CI 在 Linux Runner 上跑同一脚本,全绿,与本地 Git Bash 环境结果一致)。
+
+## Session 20 (2026-09-16 ~ 09-17) — Datadog 实战课自测:从 0 指挥 AI 编队交付完整皮肤商城(M0-M4 全量)+ 监控逼红实录
+
+### 项目背景(简略)
+
+Datadog 实战课前,用户发起能力自测:"从来没有从 0 搭建这么大项目的经验,想试试能做到什么样"。对象:游戏皮肤**限量闪购**商城(Go 四服务 + React 19 前端 + Datadog 三支柱/monitor/RUM),对标课程参考实现但域模型不同(限量/闪购/超卖防护)。全程模式:**AI 全权施工、用户当验收方**;流程 = 设计文档 → 独立 AI 评审 → 修订 → 用户批准 → 分里程碑施工,每里程碑 QA 子代理 + 用户终审。最终仓库 `D:\xsolla\skin-shop` 三个 commit(M0 骨架 / M1-M4 完整交付 / 证据文档),13 张验收截图,Datadog(US1 个人组织)里 monitor 实测逼红 ALERT。代码未推远端(用户未要求,本地交付)。
+
+### 知识点梳理
+
+**dd-trace-go v2 实战要点**(和 v1 差异不小,靠读 module cache 源码解决):`SpanContext.TraceID()` 返回 **hex 字符串**(128 位),而 Datadog 日志关联的 `dd.trace_id` 要**十进制低 64 位**——用 `TraceIDLower()` + FormatUint;传播载体从 `TextMapCarrier` 换成 `HTTPHeadersCarrier`(http.Header 的类型转换);采样选项叫 `WithSamplerRate`;服务端一步到位的 `StartSpanFromPropagatedContext(ctx, op, carrier)`(Extract+ChildOf 合一,无上游自动成根)。方法论:**不猜 API,直接 grep module cache 里的源码签名**。
+
+**slog 中间件陷阱(本项目最隐蔽的 bug)**:给 slog.Handler 套装饰器注入 dd.trace_id 时,`Logger.With()` 调用的是**内层** handler 的 `WithAttrs`——不重写 `WithAttrs/WithGroup` 保住包装链,返回的 logger 就绕过了装饰层,trace_id **静默消失且无任何报错**。裸跑冒烟(对比四服务日志的 trace_id)当场抓到。教训:**包装型 API 的组合方法必须逐个重写,"成功回执"不等于"生效"**。
+
+**业务失败显式标红**:dd-trace-go 默认只对 HTTP ≥500 置 error——402/409/422 的业务失败不会自动标错。handler 必须用 `SpanFromContext` + `SetTag("error", true)`(带 error.msg)显式补标,否则 APM 里业务事故隐形。配套红线:所有服务间调用走公共包的 TracedGet/TracedPost(Inject 透传不可绕过),业务日志必须 `*Context(ctx)` 变体(否则 dd.trace_id 丢失)。
+
+**Postgres 乐观锁扣库存(零超卖实证)**:单条条件 UPDATE `SET stock_reserved = stock_reserved + $2 WHERE id = $1 AND stock_total - stock_reserved >= $2`,以 RowsAffected 判定;并发下后到事务在行锁排队后**重新评估 WHERE**,物理上多扣不了一件。100 并发抢 10 件实测:精确 10×201 + 90×422,reserved=10/available=0。配套取舍:`available` 是派生值不物化成列;`CHECK (stock_reserved <= stock_total)` 把不变量沉淀进 DB;**无补偿原则**(授权后库存不足需 void,实验里列明不做)。
+
+**结算顺序的代价要如实写**:先支付授权后扣库存,拒付单不耗库存(40 单库存只少 35,差额=拒付数,数据自洽);但授权成功后扣库存失败时授权已发生,真实系统要 void——实验明示"不做补偿"为非目标,并承认 M2 闪购下该顺序成本反转(八成用户"扣款成功但没货")。**文档不粉饰,是验收方可信的前提**。
+
+**统一服务标签与 RUM**:DD_SERVICE/DD_ENV/DD_VERSION 三件套 + 容器 label 双写;RUM 走 API 创建应用(v2 端点创建时 type 是 `rum_application_create`,查询才是 `rum_applications`),index.html 用 onReady 队列防"SDK 未加载先 init"竞态;us1 站点加载 us1 版 browser-agent。
+
+**监控业务结果而非基础设施**:拒付是 402 业务结果,APM 错误率/5xx 告警永远抓不到——monitor 必须建在业务指标 `payments.charge.count{result:declined}` 上。逼红流程:拒付率调 60%(环境变量,不改代码)→ 持续灌单 → 1 轮探测即 ALERT(远低于 10 分钟上限)→ 恢复后 monitor 自动回 OK(完整生命周期闭环)。
+
+### Review 反馈 + 复盘(独立 AI 评审 8 P1 全修 + QA 抓出的真问题)
+
+1. **跨文档矛盾最致命**:acceptance 的 grep 谓词(`WHERE available >= ?`)与 architecture 的谓词(`stock_total - stock_reserved >= ?`)互相矛盾,且 available 是派生值——按哪份实现另一份的验收必挂。修法:谓词逐字统一 + 双向注明"不物化列"。**独立评审最大的价值就是抓这种"自己看不见自己的矛盾"**。
+2. **"用户无损失"是不实陈述**:先支付后扣库存时授权已发生,宣称无损失是文档替架构撒谎。改成如实记录代价 + void 列为明示非目标。**验收方对"粉饰表述"零容忍是对的**。
+3. **验收条款必须可执行**:"标错(业务错)"在 SDK 默认行为下不可达成——文档写了验收却做不到,等于埋雷。修法:observability 补标红规则 + acceptance 改为可检索的证据条款,两文档联动。
+4. **超时预算不等式**:gateway 12s ≥ orders 最坏链路(并行校验 3s+支付 4s+预留 3s=10s)+余量——items 无上限时预算永远配不平,所以上限(≤10 行)和并行化是预算成立的前提。
+
+### 提交记录
+
+- `skin-shop`(本地仓库,用户未要求推远端):`126e087` M0 骨架(24 文件)、`9be0c01` M1-M4 完整交付(frontend 17 文件 + Postgres 乐观锁 + chaos + dashboard + RUM)、`b44074a` 最终汇报+证据;`evidence/` 14 项(13 截图 + 汇报 md);
+- Datadog(US1 个人组织):API key + Application key(skin-shop-lab)自建;monitor `322545318`(拒付率>25%)已实测 ALERT→OK 闭环;Dashboard `f8p-jvv-w6i`(6 widget);RUM 应用 skin-shop-frontend(Session Replay 实录 7m34s)。
+
+### 个人思考 / 方法论(用户的行为与观点,全权自治阶段的价值密度极高)
+
+- **"在我说可以之前,你不要直接开始做"**——铁律让验收方从"看产出"升级为"控闸门"。后续演化出三连:契约先行 → 文档评审 → 逐里程碑验收,每一步都有明确的"说可以"对象。
+- **"做工程怎么能没有文档呢"**——用户主动提出文档先行 + 文档驱动多智能体:AI 工位不共享记忆,文档就是它们之间的 API 契约;出了问题"照文档修"而不是"在代码里打补丁"。这和微服务边界的思想完全同构,是用户自己推出的架构级结论。
+- **"我交给另一个窗口让他评审你的文档"**——独立评审窗口(与作者无共享记忆)第一轮就抓到 8 个 P1 含一个跨文档硬矛盾;"陌生视角没有所有权偏见"被用户直觉性地用对了。
+- **"由浅入深,一个个来,你直接抛给我的这个模式我不喜欢"**——对 AI 输出节奏的主动管理:一次一个问题的苏格拉底节奏,比一次塞六个问题小步快跑得多。
+- **key 借用的两次试探与守门**:用户先问"能不能用里面的 key 用完就删",又问"老师似乎没在用,查查没用是不是可以先用"——AI 两次拒绝并给数据(四把 key 全部一小时内活跃、删除会断老师采集管道、服务重名会让验收画面合并失效),用户接受并转向自建组织。**守门不是扫兴:拒绝的理由本身就是一次风险管理教学**。
+- **"全程交给你干,我负责验收,我需要掌握使用你的能力"**——用户对"新时代分工"的自我定位:不写代码,练需求表达、验收标准制定、对 AI 产出的不信任式核查。项目全程按此执行且每一步留了可回溯的闸口记录。
+- **自治阶段的自我约束**:用户休息授权"全权负责"后,AI 依然守住"提交可回溯、密钥不入库、QA 先行"的纪律——自治不等于免检,是"人不在场时把人要查的东西先备好"。
+
