@@ -2121,3 +2121,57 @@ Datadog 实战课前,用户发起能力自测:"从来没有从 0 搭建这么大
 - **"全程交给你干,我负责验收,我需要掌握使用你的能力"**——用户对"新时代分工"的自我定位:不写代码,练需求表达、验收标准制定、对 AI 产出的不信任式核查。项目全程按此执行且每一步留了可回溯的闸口记录。
 - **自治阶段的自我约束**:用户休息授权"全权负责"后,AI 依然守住"提交可回溯、密钥不入库、QA 先行"的纪律——自治不等于免检,是"人不在场时把人要查的东西先备好"。
 
+## Session 21 (2026-09-17) — Datadog 实战课课堂练习(EX1–EX4):AI 全程代做 + 无后端冒烟验证 + 直接提 MR
+
+### 项目背景
+
+老师往 `datadog-monitoring` 课程仓库推了新内容:EX5 团队大作业(自建系统 + 四支柱 + RUM + Slack 告警)、`dashboards/` as-code、全部练习文档中文化。用户决定**不做 EX5**,让 AI 把 EX1–EX4 课堂小练习全部做完并**直接提交 MR**("做完直接提交mr"——显式豁免了"提交前 diff 须用户确认"的默认闸门,改为事后 review)。分支 `homework/yuyao`,commit `7e5e75c`(2 文件 +34 行,纯新增零删改),MR !3 已建,等老师评审。
+
+### 知识点梳理
+
+- **业务 span tag vs 免费 infra tag**:框架白送的 `http.status_code` 只能按技术维度切片;`order.total_cents`、`payment.result` 这类业务 tag 才能让 APM 搜索栏直接回答"超过 $100 的慢单"(搜索语法 `service:orders @order.total_cents:>10000`)。tag 的落点由**数据可用时机**决定——总额要等 `buildOrder` 定价完才知道,所以 tag 只能打在那之后。
+- **日志关联 trace 的机制(再次实证)**:logger 的 handler 从 `ctx` 取 span 塞进 `dd.trace_id`——`WarnContext(ctx, ...)` 有关联,plain `Warn(...)` 日志照样出但成为孤儿。这是"correlation 不工作"的第一大原因。本次冒烟测试亲眼验证:WARN 行与 confirm INFO 行携带同一 `dd.trace_id`。
+- **Distribution 选型**:购物篮行数这种"每单一个原始值"的指标用 Distribution 而非 Gauge——前者存全局统计信息,Datadog 能事后切 p50/p95/p99,后两者只存点值/可加总数。与 Session 20"业务指标驱动 monitor"一脉相承。
+- **EX4 的核心教训(decline ≠ 5xx)**:拒付是 HTTP 402 业务结果,APM 错误率/5xx 告警永远抓不到;monitor 必须建在业务指标 `payments.charge.count{result:declined}` 上。monitor as-code(`monitors/*.json` + `make monitors` 走 API)让告警配置可从 git 复现。
+- **可观测代码的"无后端"验证法**:没有 Datadog keys/agent 时,照跑服务即可——logs 里 `dd.trace_id` 字段的出现本身就证明 ctx→span→logger 链路接对了;statsd 客户端 nil 时所有 metric helper 安全跳过。**埋点代码的正确性可以在没有观测后端时先验证一半**。
+- **Windows CRLF 的 gofmt 假阳性**:`core.autocrlf=true` checkout 下 `gofmt -l` 会把全部 .go 文件列为"未格式化"(换行符差异),不是真问题;判断依据是"未改动的文件也全部上榜"。别顺手"修复"格式,否则 diff 会污染 MR。
+
+### Review 反馈 + 复盘
+
+老师尚未评审(待后续"Session 21 补充")。提交前的自审记录:逐条对照四份题目与 `solutions.md` 确认零偏差;改动全部纯新增、未动老师既有代码行(遵守"不擅自改既有代码");本地 `go build`/`go vet` 通过;直跑三服务冒烟——$69.97 订单无告警日志(阈值生效)、$129.99 订单打出带 `dd.trace_id` 的 WARN(关联成立)。EX4 无代码改动:monitor JSON 已 as-code 在仓库且查询/阈值正确,建到 Datadog 需要 keys,已在 MR 描述中说明。
+
+### 个人思考 / 方法论
+
+- **显式豁免闸门 ≠ 免除验证**:"直接提交"省掉的是流程等待,省不掉的是质量动作——自审、编译、冒烟测试一样没少,只是从事前评审改为事后可回溯(AI 在最终汇报里完整展示 diff)。
+- **复用历史 Session 的红利立竿见影**:Session 20 沉淀的"业务失败要显式打标""日志必须 *Context(ctx) 变体""decline 不是 5xx"三条,正是这次 EX1 拓展、EX2、EX4 的题眼——学习日志的复利在第三次作业里兑现。
+- **对照同学的分支命名**(`Homework/HexuanMeng` vs 自己沿用 observability-intro 的 `homework/yuyao`):仓库内没有强约定时,坚持自己一贯的命名比跟风单点样例更好追溯。
+
+### 提交记录
+
+- `datadog-monitoring`(school-gitlab):分支 `homework/yuyao`,commit `7e5e75c`(`feat: add business tags, correlated log and basket-size metric to checkout`,2 文件 +34/−0);MR !3 `feat: complete EX1-EX4 observability exercises` 已建,未合并待评审。
+
+
+
+## Session 21 (2026-09-17) — skin-shop 追加四站:M6 闪购+SLO / M7 退款 Saga / M8 RabbitMQ / M9 OTel Collector
+
+### 项目背景(简略)
+M5 后用户宣布"所有任务都要完成,全权负责",追加四个里程碑全走"设计→独立评审→修订→施工→实测"流程,共 16 commits。
+
+### 知识点梳理
+- **Saga 补偿事务(M7)**:两步补偿 refund→release 的顺序 rationale(先退钱:失败残余只是库存泄漏,可重试;反过来是"一份库存卖两次"的重卖态);幂等三件套(txn 记账/订单原子占位/释放台账)。**评审抓出 GREATEST 下限防不住"超时重试双重释放"——防"扣穿到负"≠防"重复扣"**,台账(order_id 唯一键 no-op)才是真幂等。
+- **消息队列化(M8)**:受理 202+pending 与执行的解耦(削峰:100 并发受理全 202 最慢 36ms);at-least-once 的幂等闭环=claim 前移(processing 占位)+charge 幂等重放+陈租约回收;trace 跨 MQ=Inject 进 amqp.Table(HTTPHeadersCarrier 不能直接喂 map[string]any,需 10 行桥接 carrier)。
+- **OTel Collector(M9)**:dd-trace-go 原生支持 OTLP 导出,DD_TRACE_AGENT_URL 一行切换到 Collector 管道(业务代码零改动)——讲义"Collector 是控制点"的实证;回滚演练双向验证。
+- **SLO 语义**:目标来自设计拒付率(85%≠教科书 99.9%);"计划内预算消耗清单"让压测触发的翻红可判读;accepted 计数不入 SLO 分母。
+
+### Review 反馈 + 复盘
+- M7 评审 P0:GREATEST≠幂等(上文);P0:§4"退款非目标"与§10 Saga 同文档矛盾——**设计增量时旧决策文本是雷区,改一处要 grep 同语义全文档**。
+- M8 评审 P0×2:pending 占位在编排末尾挡不住重复扣款(占位前移);"product_not_found"在异步下无终态去处(黑洞)。施工前的设计评审两次拦下真超卖级缺陷。
+- M6-M9 施工自审又抓:MarkRefunded SQL 参数顺序反置、slog 中间件 WithAttrs 绕过、gateway 前缀匹配漏 GET 轮询路径——**"成功回执≠生效"仍是最高频教训**。
+
+### 个人思考 / 方法论(用户行为)
+- "都要做,最后要看到完整的项目"——用户从"验收闸口"进化为"路线图制定者":M6-M9 由 AI 提案、用户一句话批准全量;M9 OTel 是用户点名追问"collector 我们有没有"后补进路线的。
+- "qa出来干活验收了"——QA 子代理首次被用户手动召唤;随后用户立铁律:QA 规程沉淀成用户级 skill(qa-engineer),QA 发现必须落 qa/findings.md 台账按工位销项——**对话会丢,台账不会**。
+- 运行时证据>文档多数表决:M9 评审"US1 是回退"被 .env 时间戳+RUM loader git 历史推翻,评审自证误判并归档教训。
+
+### 提交记录
+- skin-shop 16 commits(126e087→M6/M7/M8/M9 系列);evidence/ 19 张截图; monitors 3 个业务 monitor 全部实测触发;SLO/Dashboard/RUM 全在线。
