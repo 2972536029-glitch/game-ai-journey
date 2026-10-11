@@ -2206,3 +2206,32 @@ M5 后用户宣布"所有任务都要完成,全权负责",追加四个里程碑�
 
 ### 提交记录
 - `resilient-systems`(school-gitlab):分支 `homework/yuyao`,commit `3dec8ac`(`feat: add PSP retry with backoff+jitter and circuit breaker`,10 文件 +1225/−32,含 `.gitignore`/测试报告脚本);MR !2 已建(描述含题目↔测试映射表+工程决策),待评审。16 测试 `-race -count=5` 全绿。
+
+## Session 23 (2026-10-05 ~ 10-11) — Xsolla 分布式设计 Webhooks 课:讲义汉化 + 三题全交(含选做)
+
+### 项目背景(简略)
+课 Week 11-2 Webhooks:Provider(支付平台)→ Checkout(商户)两个 Go 教学模拟器,串起一次支付通知的完整旅程——投递、验签、重试、去重。本轮是**多门课知识的汇合点**:Session 4 幂等键、EX5 HMAC webhook 签名、M8 at-least-once 幂等闭环、Session 22 幂等重放四步,全部在这门课收口。流程:克隆课程仓库 → AI 汉化 46KB 英文讲义(代码块保持原样,放仓库外防误提交)→ 三题作业全流程交付(**含选做 Task 3**)→ MR !2。工作模式与以往不同:用户全程委托,AI 落预测→写测试→跑证据,用户在 MR 上事后 review。
+
+### 知识点梳理
+- **两场独立的 HTTP 对话**:`201` 是 Provider 回给终端的(创建支付成功),`204` 是 Checkout 回给 Provider 的(webhook 确认)。Provider 在 goroutine 里异步发通知,写 `201` 时不等投递结果——**201 只证明支付创建,不证明通知送达**;送达证据要看 Provider 的 `delivery status=204` 日志 + Checkout 的 `webhook received` 日志。日志显示顺序 ≠ 对话完成顺序。
+- **验签必须对原始字节**:Xsolla 规则 `SHA-1(raw body + project secret)`,摘要放 `Authorization: Signature <hex>`。`{"amount":1000}` 和 `{"amount": 1000}` 语义相同但**字节不同、签名不同**——接收方必须"读一次 body 存字节 → 用字节验签 → 验过再用**同一份字节**解析 JSON",先解析再重编码(空白/键序变了)会让合法通知验签失败。细节:`subtle.ConstantTimeCompare`(逐字节比较不提前返回,防时序攻击)、拒绝大写 hex、secret 只存服务端、请求只带摘要。
+- **at-least-once 是物理规律**:连接可能断在"Checkout 已记录事件"和"Provider 收到确认"之间。发送方只有两个观测("收到 2xx"/"其他"),**区分不了"没做"和"做了但回执丢了"**——保守起见必须重试,重复投递因此不可避免。解药不在发送方,在接收方幂等。
+- **幂等去重**:稳定 `event_id` 是事件的身份证(重试保留原 ID,新支付才有新 ID)。`sync.Map.LoadOrStore` 把"查"和"记"做成一个原子操作,并发下只有一个请求能赢"新事件"判定。**合法的重复也要回 204**(让发送方停止重试),但**不能重走新事件分支**。关键测试思维:**两个 204 证明不了去重**——坏接收方可以处理两遍照样回两次 204,必须断言分支日志(新事件/重复各几条)。
+- **重试策略(教学版)**:2xx 停 / 网络错·超时·5xx 重试(共 3 次尝试,1s、2s 退避)/ 3xx·4xx(含 429)不重试直接停。生产差异:真实 schedule 更长、退避带抖动(Session 22 的 full jitter)、429 通常要配合 Retry-After。
+- **验证顺序是安全设计,不只是流程**:`HandleWebhook` 验签失败即 `return`,发生在 `markIfNew` **之前**——被拒请求占不了事件 ID。如果反过来先记 ID 再验签,知道 ID 的攻击者可以用坏签名故意"占坑",让之后的合法通知被误判成重复吞掉(Task 3 用测试钉死这个性质;同型:既有测试 `TestInvalidEventDoesNotPoisonIdempotencyStore` 钉的是"无效事件内容不占坑")。
+- **测试技巧三件套**:①**受控接收方**——`httptest.NewServer` 起临时服务,`Hijack()` 拿连接控制权后 `conn.Close()`,在响应写出前断连,不赌真实网络故障;②**wait 注入**——`deliverWebhook(client, wait, ...)` 把等待函数做成参数,测试传 `noWait` 跳过退避,生产传 `time.Sleep`(依赖注入让时间可测);③**分支证据**——`log.SetOutput(&buf)` 捕获日志,按 ID 边界(`id=<id> ` 尾空格 / `<id>, skipping` 逗号)计数分支次数。
+
+### Review 反馈 + 复盘
+- 老师 review 未到(MR !2 开着,到了补"Session 23 补充")。本轮质量关 = AI 自审 + **预测先行纪律**:预测表先落文档再跑测试(时序上真实,不是事后编的),Task 2 五项、Task 3 五项预测全中——中不中不重要,先想清楚再验证才是复习点。
+- **教科书 demo vs 工业界**(课程自己注脚的,值得记):去重记录存内存、Checkout 重启即丢 → 生产要**持久化幂等表**(且要考虑存储故障窗口);重试时间表是教学值;新事件分支只打日志不发道具 → 真实业务效果要"恰好一次"的事务保障。呼应 M8 的"claim 前移 + 幂等重放"。
+- 坑三则:①**git ref 目录冲突**——远端已有同学的 `homework/sunmingyang`,`git push homework` 被拒(`refs/heads/homework` 是"目录",不能再有同名"文件"),解法:改 `homework/yuyao`(班级惯例人名后缀);②**gofmt 全文件误报**——`core.autocrlf=true` 让 Windows 检出全变 CRLF,`gofmt -l` 列出所有文件,提交时 git 自动转回 LF,不是真格式问题(别被吓到去全量重排);③**GitLab API PUT 400**——描述 JSON 里有非法转义,先用 `python json.load` 验证再发,顺手把代码块里的 tab 换空格。
+
+### 个人思考 / 方法论(用户行为)
+- **"这次老师要求用自己话写吗?阅读作业要求没有的话你帮我写"**——本轮最有价值的一句话。Session 18 的 own-words 教训被提炼成自我规矩后,这里用户没有无脑套用,而是**先核对规矩的适用前提**:查了作业原文,确认老师这次只要求"In 2-4 sentences, explain..."(解释题)+ "Use your own results"(结果真实),没有措辞要求;于是 AI 代写解释 + 用户知情接受。**自我规矩 ≠ 外部要求,套用前先问这条规矩防的是当初那个坑,还是已经泛化成过度约束**。Session 18 教训的本体是"AI 代写不 review 会翻车",不是"永远不能 AI 代写"。
+- 全程委托模式首次跑通整门作业:AI 写测试/跑证据/建 MR,用户事后在 MR 上 review——闸口后移但没有消失。AI 侧的对应义务:每个"预测先行""真实输出""如实报错(如 PUT 400 插曲)"都留了可回溯的痕迹。
+- "选做也做"——用户明确要求连可选 Task 3 一起交付;三次测试交付(Task 2、Task 3、包检查)全部一次通过,预测全中。
+
+### 提交记录
+- `distributed-design-webhooks`(school-gitlab):分支 `homework/yuyao`,commits `88c1c96`(Task 1+2)+ `e2a4471`(Task 3 选做),MR !2 三题全交待评审。新增 `TestHomeworkDistinctEventIDs`(A/A/B:断言三状态 + 按 ID 计数新事件/重复日志)和 `TestHomeworkInvalidSignatureThenValid`(坏签名不占坑:400/INVALID_SIGNATURE/无记录/零日志 → 204/新事件分支),`go test -race ./...` 全绿、`go vet` 干净、应用代码零改动。证据文档 `homework-submission.md`(预测/实际对照表 + 三处解释)。
+- 中文讲义:`D:\xsolla\distributed-design-webhooks-讲义-zh.md`(仓库外,防误提交;标题 24/24、代码块 98/98、GitLab 链接 20/20 对账无漏译)。
+
